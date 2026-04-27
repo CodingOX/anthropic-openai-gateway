@@ -1,0 +1,49 @@
+# Docker 构建时忽略的文件和目录
+
+# 版本控制
+.git
+.gitignore
+.gitattributes
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+
+# 构建产物
+dist/
+build/
+*.o
+*.a
+
+# Go
+vendor/
+go.sum.bak
+
+# 配置和密钥
+configs/config.json
+.env
+.env.local
+
+# 日志
+logs/
+*.log
+
+# 文档
+README.md
+DEPLOYMENT.md
+*.md
+
+# GitHub
+.github/
+
+# 测试覆盖率
+coverage.out
+*.coverprofile
+
+# 其他
+.make/
+Makefile

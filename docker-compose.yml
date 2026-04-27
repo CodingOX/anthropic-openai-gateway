@@ -1,0 +1,48 @@
+version: '3.8'
+
+services:
+  gateway:
+    # 使用本地 Dockerfile 构建
+    build:
+      context: .
+      dockerfile: Dockerfile
+    
+    container_name: anthropic-openai-gateway
+    restart: unless-stopped
+    
+    ports:
+      - "3456:3456"  # 暴露网关端口
+    
+    environment:
+      # 配置文件位置（可选，如果挂载配置文件）
+      CONFIG_FILE: /etc/gateway/config.json
+      
+      # 或者直接通过环境变量配置（覆盖配置文件）
+      LISTEN_HOST: "0.0.0.0"
+      LISTEN_PORT: "3456"
+      OPENAI_BASE_URL: "https://api.openai.com/v1"
+      OPENAI_API_KEY: "${OPENAI_API_KEY}"  # 从 .env 文件读取
+      OPENAI_TIMEOUT_MS: "120000"
+    
+    volumes:
+      # 挂载配置文件（可选，如果使用本地配置）
+      # - ./configs/config.json:/etc/gateway/config.json:ro
+      
+      # 或挂载日志目录
+      # - ./logs:/var/log/gateway
+    
+    # 网络配置（可选）
+    networks:
+      - gateway-network
+    
+    # 日志配置
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+# 定义网络
+networks:
+  gateway-network:
+    driver: bridge

@@ -1,6 +1,8 @@
 {
   "listen_host": "127.0.0.1",
   "listen_port": 3456,
+  "log_prompt_preview_on_error": false,
+  "prompt_preview_max_chars": 240,
   "openai": {
     "base_url": "https://api.openai.com/v1",
     "api_key": "${OPENAI_API_KEY}",

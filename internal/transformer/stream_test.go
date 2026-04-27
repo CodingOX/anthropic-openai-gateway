@@ -1,0 +1,149 @@
+package transformer
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"strings"
+	"testing"
+
+	"anthropic-openai-gateway/pkg/types"
+)
+
+func TestProxyStreamEmitsCompleteTextEventSequence(t *testing.T) {
+	var out bytes.Buffer
+	body := sseBody(
+		`{"id":"chunk_1","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}`,
+		`{"id":"chunk_1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":2}}`,
+		`[DONE]`,
+	)
+
+	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", context.Background()); err != nil {
+		t.Fatalf("ProxyStream() error = %v", err)
+	}
+
+	events := parseEvents(t, out.String())
+	want := []string{
+		"message_start",
+		"content_block_start",
+		"content_block_delta",
+		"content_block_stop",
+		"message_delta",
+		"message_stop",
+	}
+	if len(events) != len(want) {
+		t.Fatalf("event count = %d, want %d: %#v", len(events), len(want), events)
+	}
+	for i := range want {
+		if events[i].Type != want[i] {
+			t.Fatalf("event[%d].Type = %q, want %q", i, events[i].Type, want[i])
+		}
+	}
+	if events[2].Delta == nil || events[2].Delta.Text != "hello" {
+		t.Fatalf("text delta = %#v, want hello", events[2].Delta)
+	}
+}
+
+func TestProxyStreamEmitsThinkingThenText(t *testing.T) {
+	var out bytes.Buffer
+	body := sseBody(
+		`{"id":"chunk_1","choices":[{"index":0,"delta":{"reasoning_content":"think"},"finish_reason":null}]}`,
+		`{"id":"chunk_1","choices":[{"index":0,"delta":{"content":"answer"},"finish_reason":null}]}`,
+		`{"id":"chunk_1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	)
+
+	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", context.Background()); err != nil {
+		t.Fatalf("ProxyStream() error = %v", err)
+	}
+
+	events := parseEvents(t, out.String())
+	want := []string{
+		"message_start",
+		"content_block_start",
+		"content_block_delta",
+		"content_block_stop",
+		"content_block_start",
+		"content_block_delta",
+		"content_block_stop",
+		"message_delta",
+		"message_stop",
+	}
+	if len(events) != len(want) {
+		t.Fatalf("event count = %d, want %d: %#v", len(events), len(want), events)
+	}
+	for i := range want {
+		if events[i].Type != want[i] {
+			t.Fatalf("event[%d].Type = %q, want %q", i, events[i].Type, want[i])
+		}
+	}
+	if events[2].Delta == nil || events[2].Delta.Type != "thinking_delta" || events[2].Delta.Thinking != "think" {
+		t.Fatalf("thinking delta = %#v, want thinking", events[2].Delta)
+	}
+	if events[5].Delta == nil || events[5].Delta.Type != "text_delta" || events[5].Delta.Text != "answer" {
+		t.Fatalf("text delta = %#v, want answer", events[5].Delta)
+	}
+}
+
+func TestProxyStreamStopsToolBlockWhenFinishReasonArrives(t *testing.T) {
+	var out bytes.Buffer
+	idx := 0
+	body := sseBody(
+		`{"id":"chunk_1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"search","arguments":"{\"q\""}}]},"finish_reason":null}]}`,
+		`{"id":"chunk_1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":":\"docs\"}"}}]},"finish_reason":null}]}`,
+		`{"id":"chunk_1","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`,
+		`[DONE]`,
+	)
+	_ = idx
+
+	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", context.Background()); err != nil {
+		t.Fatalf("ProxyStream() error = %v", err)
+	}
+
+	events := parseEvents(t, out.String())
+	var sawToolStart, sawToolStop bool
+	for _, event := range events {
+		if event.Type == "content_block_start" &&
+			event.ContentBlock != nil &&
+			event.ContentBlock.Type == "tool_use" {
+			sawToolStart = true
+		}
+		if event.Type == "content_block_stop" {
+			sawToolStop = true
+		}
+	}
+	if !sawToolStart {
+		t.Fatalf("missing tool content_block_start: %#v", events)
+	}
+	if !sawToolStop {
+		t.Fatalf("missing tool content_block_stop: %#v", events)
+	}
+}
+
+func sseBody(lines ...string) io.ReadCloser {
+	var b strings.Builder
+	for _, line := range lines {
+		b.WriteString("data: ")
+		b.WriteString(line)
+		b.WriteString("\n\n")
+	}
+	return io.NopCloser(strings.NewReader(b.String()))
+}
+
+func parseEvents(t *testing.T, raw string) []types.StreamEvent {
+	t.Helper()
+	var events []types.StreamEvent
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		var event types.StreamEvent
+		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); err != nil {
+			t.Fatalf("unmarshal event: %v; line=%s", err, line)
+		}
+		events = append(events, event)
+	}
+	return events
+}

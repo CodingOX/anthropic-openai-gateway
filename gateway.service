@@ -1,0 +1,40 @@
+[Unit]
+Description=Anthropic-OpenAI Gateway Service
+Documentation=https://github.com/your-repo/anthropic-openai-gateway
+After=network.target
+
+[Service]
+Type=simple
+User=gateway
+Group=gateway
+WorkingDirectory=/opt/gateway
+
+# 核心配置
+ExecStart=/opt/gateway/gateway
+
+# 重启策略
+Restart=always
+RestartSec=10
+StartLimitInterval=600
+StartLimitBurst=5
+
+# 日志输出
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=gateway
+
+# 资源限制
+LimitNOFILE=65535
+LimitNPROC=32768
+
+# 环境变量（按需修改）
+Environment="CONFIG_FILE=/etc/gateway/config.json"
+Environment="LISTEN_HOST=0.0.0.0"
+Environment="LISTEN_PORT=3456"
+
+# 如果需要配置 OpenAI，可在此添加：
+# Environment="OPENAI_API_KEY=sk-xxx"
+# Environment="OPENAI_BASE_URL=https://api.openai.com/v1"
+
+[Install]
+WantedBy=multi-user.target

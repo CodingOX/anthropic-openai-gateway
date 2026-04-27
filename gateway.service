@@ -28,13 +28,15 @@ LimitNOFILE=65535
 LimitNPROC=32768
 
 # 环境变量（按需修改）
-Environment="CONFIG_FILE=/etc/gateway/config.json"
+EnvironmentFile=-/etc/gateway/gateway.env
 Environment="LISTEN_HOST=0.0.0.0"
 Environment="LISTEN_PORT=3456"
 
-# 如果需要配置 OpenAI，可在此添加：
-# Environment="OPENAI_API_KEY=sk-xxx"
-# Environment="OPENAI_BASE_URL=https://api.openai.com/v1"
+# 推荐把 OpenAI 与模型配置放到 /etc/gateway/gateway.env：
+# OPENAI_API_KEY=sk-xxx
+# OPENAI_BASE_URL=https://api.openai.com/v1
+# OPENAI_TIMEOUT_MS=120000
+# MODELS_NEED_TRANSFORMATION=gpt-4.1,gpt-4o,gpt-4o-mini,gpt-4.1-mini,gpt-4.1-nano,gpt-5,o3,o3-mini,o4-mini
 
 [Install]
 WantedBy=multi-user.target

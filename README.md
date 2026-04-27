@@ -32,13 +32,16 @@ Claude Code                    Gateway                       OpenAI API
 ### 启动
 
 ```bash
-# 1. 复制配置文件
-cp configs/config.example.json configs/config.json
+# 1. 准备环境变量文件
+cp .env.example .env.gateway
 
-# 2. 设置 API Key
-export OPENAI_API_KEY=sk-xxx
+# 2. 编辑其中的 OPENAI_API_KEY 等配置
+$EDITOR .env.gateway
 
-# 3. 启动网关（默认 127.0.0.1:3456）
+# 3. 导出环境变量并启动网关（默认 127.0.0.1:3456）
+set -a
+source ./.env.gateway
+set +a
 go run cmd/gateway/main.go
 ```
 
@@ -54,45 +57,22 @@ claude
 
 ## 配置
 
-### 配置文件 `configs/config.json`
+### 环境变量
 
-```json
-{
-  "listen_host": "127.0.0.1",
-  "listen_port": 3456,
-  "openai": {
-    "base_url": "https://api.openai.com/v1",
-    "api_key": "sk-xxx",
-    "timeout_ms": 120000
-  },
-  "models_need_transformation": [
-    "gpt-4.1",
-    "gpt-4o",
-    "gpt-4o-mini",
-    "gpt-4.1-mini",
-    "gpt-4.1-nano",
-    "gpt-5",
-    "o3",
-    "o3-mini",
-    "o4-mini"
-  ]
-}
-```
-
-### 环境变量覆盖
-
-所有配置项均可用环境变量覆盖（优先级更高）：
+网关运行时只读取环境变量；仓库根目录的 [.env.example](.env.example) 提供了一份可直接复制的模板。
 
 | 环境变量 | 对应配置 | 默认值 |
 |---------|---------|--------|
-| `CONFIG_FILE` | 配置文件路径 | `./configs/config.json` |
 | `LISTEN_HOST` | 监听地址 | `127.0.0.1` |
 | `LISTEN_PORT` | 监听端口 | `3456` |
 | `OPENAI_BASE_URL` | OpenAI API 地址 | `https://api.openai.com/v1` |
 | `OPENAI_API_KEY` | API 密钥 | — |
 | `OPENAI_TIMEOUT_MS` | 请求超时（毫秒） | `120000` |
+| `MODELS_NEED_TRANSFORMATION` | 需转换模型列表（逗号分隔） | `gpt-4.1,gpt-4o,gpt-4o-mini,gpt-4.1-mini,gpt-4.1-nano,gpt-5,o3,o3-mini,o4-mini` |
+| `LOG_PROMPT_PREVIEW_ON_ERROR` | 出错时记录 prompt 预览 | `false` |
+| `PROMPT_PREVIEW_MAX_CHARS` | prompt 预览最大字符数 | `240` |
 
-> **注意**：`api_key` 在 JSON 配置中使用 `${OPENAI_API_KEY}` 占位时，会从环境变量中读取实际值。
+> `MODELS_NEED_TRANSFORMATION` 使用逗号分隔，解析时会自动去掉首尾空白。
 
 ## 格式转换映射
 
@@ -143,10 +123,10 @@ curl http://127.0.0.1:3456/health
 ```
 .
 ├── cmd/gateway/main.go              # 入口
-├── configs/config.example.json      # 配置模板
+├── .env.example                     # 环境变量模板
 ├── internal/
 │   ├── client/openai.go             # OpenAI HTTP 客户端
-│   ├── config/config.go             # 配置加载（文件 + 环境变量覆盖）
+│   ├── config/config.go             # 配置加载（默认值 + 环境变量）
 │   ├── handler/messages.go          # /v1/messages HTTP 处理器
 │   └── transformer/
 │       ├── request.go               # Anthropic → OpenAI 请求转换

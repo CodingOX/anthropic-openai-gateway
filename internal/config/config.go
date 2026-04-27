@@ -1,12 +1,24 @@
 // Package config 处理网关配置的加载与合并。
-// 支持 JSON 配置文件 + 环境变量覆盖，环境变量优先级更高。
+// 纯 ENV 模式下，仅使用默认值和环境变量。
 package config
 
 import (
-	"encoding/json"
 	"os"
 	"strconv"
+	"strings"
 )
+
+var defaultModelsNeedTransformation = []string{
+	"gpt-4.1",
+	"gpt-4o",
+	"gpt-4o-mini",
+	"gpt-4.1-mini",
+	"gpt-4.1-nano",
+	"gpt-5",
+	"o3",
+	"o3-mini",
+	"o4-mini",
+}
 
 // Config 网关全部配置。
 type Config struct {
@@ -25,30 +37,20 @@ type OpenAIConfig struct {
 	TimeoutMS int    `json:"timeout_ms"`
 }
 
-// Load 按优先级加载配置：默认值 → 配置文件 → 环境变量。
+// Load 加载配置：默认值 → 环境变量。
 func Load() (*Config, error) {
 	cfg := &Config{
-		ListenHost:            "127.0.0.1",
-		ListenPort:            3456,
-		PromptPreviewMaxChars: 240,
+		ListenHost:               "127.0.0.1",
+		ListenPort:               3456,
+		ModelsNeedTransformation: append([]string(nil), defaultModelsNeedTransformation...),
+		PromptPreviewMaxChars:    240,
 		OpenAI: OpenAIConfig{
 			BaseURL:   "https://api.openai.com/v1",
 			TimeoutMS: 120000,
 		},
 	}
 
-	// 1. 加载配置文件
-	configFile := os.Getenv("CONFIG_FILE")
-	if configFile == "" {
-		configFile = "./configs/config.json"
-	}
-	if data, err := os.ReadFile(configFile); err == nil {
-		if err := json.Unmarshal(data, cfg); err != nil {
-			return nil, err
-		}
-	}
-
-	// 2. 环境变量覆盖（优先级最高）
+	// 纯 ENV 模式下，只接受环境变量覆盖，避免部署时维护两套配置来源。
 	overrideFromEnv(cfg)
 
 	return cfg, nil
@@ -75,6 +77,9 @@ func overrideFromEnv(cfg *Config) {
 			cfg.OpenAI.TimeoutMS = t
 		}
 	}
+	if v := os.Getenv("MODELS_NEED_TRANSFORMATION"); v != "" {
+		cfg.ModelsNeedTransformation = splitCommaSeparatedValues(v)
+	}
 	if v := os.Getenv("LOG_PROMPT_PREVIEW_ON_ERROR"); v != "" {
 		if enabled, err := strconv.ParseBool(v); err == nil {
 			cfg.LogPromptPreviewOnError = enabled
@@ -85,4 +90,16 @@ func overrideFromEnv(cfg *Config) {
 			cfg.PromptPreviewMaxChars = limit
 		}
 	}
+}
+
+func splitCommaSeparatedValues(value string) []string {
+	parts := strings.Split(value, ",")
+	values := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			values = append(values, trimmed)
+		}
+	}
+	return values
 }

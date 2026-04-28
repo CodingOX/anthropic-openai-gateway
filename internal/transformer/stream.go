@@ -96,8 +96,8 @@ func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model strin
 			delta := choice.Delta
 
 			// 处理文本增量
-			if delta.Content != "" {
-				events := state.textDelta(delta.Content)
+			if text := extractStreamText(delta.Content); text != "" {
+				events := state.textDelta(text)
 				for _, event := range events {
 					h.writeEvent(w, event, flusher...)
 					eventCount++
@@ -343,6 +343,32 @@ func (h *StreamHandler) convertStreamFinishReason(reason string) string {
 		return "end_turn"
 	default:
 		return "end_turn"
+	}
+}
+
+func extractStreamText(content interface{}) string {
+	switch value := content.(type) {
+	case nil:
+		return ""
+	case string:
+		return value
+	case []interface{}:
+		var parts []string
+		for _, item := range value {
+			part, ok := item.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if partType, _ := part["type"].(string); partType != "text" {
+				continue
+			}
+			if text, _ := part["text"].(string); text != "" {
+				parts = append(parts, text)
+			}
+		}
+		return strings.Join(parts, "")
+	default:
+		return ""
 	}
 }
 

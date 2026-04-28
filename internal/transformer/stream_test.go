@@ -86,6 +86,27 @@ func TestProxyStreamEmitsThinkingThenText(t *testing.T) {
 	}
 }
 
+func TestProxyStreamEmitsTextFromStructuredContentDelta(t *testing.T) {
+	var out bytes.Buffer
+	body := sseBody(
+		`{"id":"chunk_1","choices":[{"index":0,"delta":{"content":[{"type":"text","text":"hello"},{"type":"text","text":" world"}]},"finish_reason":null}]}`,
+		`{"id":"chunk_1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		`[DONE]`,
+	)
+
+	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", context.Background()); err != nil {
+		t.Fatalf("ProxyStream() error = %v", err)
+	}
+
+	events := parseEvents(t, out.String())
+	if len(events) < 3 {
+		t.Fatalf("event count = %d, want at least 3: %#v", len(events), events)
+	}
+	if events[2].Delta == nil || events[2].Delta.Text != "hello world" {
+		t.Fatalf("text delta = %#v, want hello world", events[2].Delta)
+	}
+}
+
 func TestProxyStreamEmitsCacheUsageInMessageDelta(t *testing.T) {
 	var out bytes.Buffer
 	body := sseBody(

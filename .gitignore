@@ -2,3 +2,6 @@
 gateway
 configs/config.json
 oc-go-cc/
+.dist/
+.idea/
+.env

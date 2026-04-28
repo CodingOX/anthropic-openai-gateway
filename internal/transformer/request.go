@@ -4,6 +4,7 @@ package transformer
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"anthropic-openai-gateway/pkg/types"
@@ -19,11 +20,16 @@ func NewRequestTransformer() *RequestTransformer {
 
 // TransformRequest 执行 Anthropic → OpenAI 请求转换。
 func (t *RequestTransformer) TransformRequest(ar *types.MessageRequest) (*types.ChatCompletionRequest, error) {
+	log.Printf("[TRANSFORMER] 🔄 开始转换 Anthropic → OpenAI")
+	log.Printf("[TRANSFORMER] 📝 模型: %s, 消息数: %d, 工具数: %d", ar.Model, len(ar.Messages), len(ar.Tools))
+
 	// 转换消息列表
 	messages, systemMsg, err := t.convertMessages(ar.Messages, ar.System)
 	if err != nil {
+		log.Printf("[TRANSFORMER] ❌ 消息转换失败: %v", err)
 		return nil, fmt.Errorf("convert messages: %w", err)
 	}
+	log.Printf("[TRANSFORMER] ✅ 消息转换完成: %d条消息", len(messages))
 
 	req := &types.ChatCompletionRequest{
 		Model:         ar.Model, // 直接使用原 model 名（如 gpt-4o）
@@ -35,15 +41,17 @@ func (t *RequestTransformer) TransformRequest(ar *types.MessageRequest) (*types.
 		StreamOptions: t.convertStreamOptions(ar.Stream),
 	}
 
-	// max_tokens → max_completion_tokens（OpenAI 推荐用法）
+	// 为兼容当前上游实现，保留经典的 max_tokens 字段。
 	if ar.MaxTokens > 0 {
-		req.MaxCompletionTokens = &ar.MaxTokens
+		req.MaxTokens = &ar.MaxTokens
+		log.Printf("[TRANSFORMER] 📊 max_tokens: %d → max_tokens", ar.MaxTokens)
 	}
 
 	// 转换工具定义
 	if len(ar.Tools) > 0 {
 		req.Tools = t.convertTools(ar.Tools)
 		req.ToolChoice = t.convertToolChoice(ar.ToolChoice)
+		log.Printf("[TRANSFORMER] 🔧 工具转换完成: %d个工具, tool_choice=%v", len(req.Tools), ar.ToolChoice)
 	}
 
 	// 注入 system prompt 作为第一条 developer 消息。

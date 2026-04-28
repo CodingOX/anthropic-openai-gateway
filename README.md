@@ -66,24 +66,20 @@ claude
 
 ### 环境变量
 
-网关运行时只读取环境变量；仓库根目录的 [.env.example](.env.example) 提供了一份可直接复制的模板。
+网关运行时只读取环境变量；仓库根目录的 [.env.example](.env.example) 提供了一份模板。
 
-| 环境变量 | 对应配置 | 默认值 |
-|---------|---------|--------|
-| `LISTEN_HOST` | 监听地址 | `127.0.0.1` |
+| 环境变量 | 说明 | 默认值 |
+|---------|------|--------|
+| `OPENCODE_API_KEY` | 上游 opencode go API 密钥 | — |
+| `BASE_URL` | 上游基础端点 | `https://api.openai.com/v1` |
 | `LISTEN_PORT` | 监听端口 | `3456` |
-| `OPENAI_BASE_URL` | OpenAI API 地址 | `https://api.openai.com/v1` |
-| `OPENAI_API_KEY` | API 密钥 | — |
-| `OPENAI_TIMEOUT_MS` | 请求超时（毫秒） | `120000` |
-| `ANTHROPIC_BASE_URL` | Anthropic API 地址（透传用） | `https://api.anthropic.com/v1` |
-| `ANTHROPIC_API_KEY` | Anthropic API 密钥（透传用） | — |
-| `ANTHROPIC_TIMEOUT_MS` | 透传请求超时（毫秒） | `120000` |
+| `NON_STREAM_TIMEOUT_MS` | 非流式请求总超时（毫秒） | `120000` |
+| `TIMEOUT_MS` | 兼容旧配置的别名；仅在未设置 `NON_STREAM_TIMEOUT_MS` 时生效 | — |
 | `MODELS_NEED_TRANSFORMATION` | 需转换模型列表（逗号分隔） | `gpt-4.1,gpt-4o,gpt-4o-mini,gpt-4.1-mini,gpt-4.1-nano,gpt-5,o3,o3-mini,o4-mini` |
-| `LOG_PROMPT_PREVIEW_ON_ERROR` | 出错时记录 prompt 预览 | `false` |
-| `PROMPT_PREVIEW_MAX_CHARS` | prompt 预览最大字符数 | `240` |
 
+> `NON_STREAM_TIMEOUT_MS` 只作用于非流式请求。
+> 流式请求不设置总时长上限，会持续到上游结束、客户端断开或网络错误为止。
 > `MODELS_NEED_TRANSFORMATION` 使用逗号分隔，解析时会自动去掉首尾空白。
-> 未命中 `MODELS_NEED_TRANSFORMATION` 的模型会透传到 Anthropic API，因此透传场景需要配置 `ANTHROPIC_API_KEY`。
 
 ## 格式转换映射
 
@@ -97,7 +93,7 @@ claude
 | `tools[].name` | `tools[].function.name` |
 | `tools[].input_schema` | `tools[].function.parameters` |
 | `tool_choice` (auto/any/tool) | `tool_choice` (auto/required/named) |
-| `max_tokens` | `max_completion_tokens` |
+| `max_tokens` | `max_tokens` |
 | `stop_sequences` | `stop` |
 | `stream` | `stream` |
 

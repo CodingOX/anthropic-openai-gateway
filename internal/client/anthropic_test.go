@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"anthropic-openai-gateway/internal/config"
 )
@@ -29,23 +30,21 @@ func TestAnthropicClientForwardsRequestAsIs(t *testing.T) {
 	defer upstream.Close()
 
 	c := NewAnthropicClient(&config.Config{
-		Anthropic: config.AnthropicConfig{
-			BaseURL:   upstream.URL,
-			APIKey:    "sk-ant-test123",
-			TimeoutMS: 5000,
-		},
+		BaseURL:               upstream.URL,
+		APIKey:                "sk-ant-test123",
+		NonStreamingTimeoutMS: 5000,
 	})
 
 	// 模拟调用方请求头，包含 anthropic-beta 等 Anthropic 扩展头
 	callerHeaders := http.Header{
-		"Anthropic-Beta":           {"extended-thinking-2025-04-22"},
-		"Anthropic-Version":        {"2024-02-15"},
-		"X-Custom-Private":         {"should-not-leak"},
-		"Authorization":            {"Bearer should-not-leak"},
+		"Anthropic-Beta":    {"extended-thinking-2025-04-22"},
+		"Anthropic-Version": {"2024-02-15"},
+		"X-Custom-Private":  {"should-not-leak"},
+		"Authorization":     {"Bearer should-not-leak"},
 	}
 
 	reqBody := `{"model":"claude-sonnet-4-20250514","max_tokens":100,"messages":[{"role":"user","content":"hi"}]}`
-	resp, err := c.ForwardMessage(context.Background(), strings.NewReader(reqBody), callerHeaders)
+	resp, err := c.ForwardMessage(context.Background(), strings.NewReader(reqBody), callerHeaders, false)
 	if err != nil {
 		t.Fatalf("ForwardMessage() error = %v", err)
 	}
@@ -108,14 +107,12 @@ func TestAnthropicClientUsesDefaultAnthropicVersionWhenCallerHeadersNil(t *testi
 	defer upstream.Close()
 
 	c := NewAnthropicClient(&config.Config{
-		Anthropic: config.AnthropicConfig{
-			BaseURL:   upstream.URL,
-			APIKey:    "sk-ant-test",
-			TimeoutMS: 5000,
-		},
+		BaseURL:               upstream.URL,
+		APIKey:                "sk-ant-test",
+		NonStreamingTimeoutMS: 5000,
 	})
 
-	resp, err := c.ForwardMessage(context.Background(), strings.NewReader("{}"), nil)
+	resp, err := c.ForwardMessage(context.Background(), strings.NewReader("{}"), nil, false)
 	if err != nil {
 		t.Fatalf("ForwardMessage() error = %v", err)
 	}
@@ -134,14 +131,12 @@ func TestAnthropicClientPassesUpstreamErrorStatus(t *testing.T) {
 	defer upstream.Close()
 
 	c := NewAnthropicClient(&config.Config{
-		Anthropic: config.AnthropicConfig{
-			BaseURL:   upstream.URL,
-			APIKey:    "sk-ant-test123",
-			TimeoutMS: 5000,
-		},
+		BaseURL:               upstream.URL,
+		APIKey:                "sk-ant-test123",
+		NonStreamingTimeoutMS: 5000,
 	})
 
-	resp, err := c.ForwardMessage(context.Background(), strings.NewReader("{}"), nil)
+	resp, err := c.ForwardMessage(context.Background(), strings.NewReader("{}"), nil, false)
 	if err != nil {
 		t.Fatalf("ForwardMessage() error = %v, want nil (should not error on HTTP-level failures)", err)
 	}
@@ -154,5 +149,23 @@ func TestAnthropicClientPassesUpstreamErrorStatus(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(body), "invalid_request_error") {
 		t.Fatalf("body = %s, want containing error details", body)
+	}
+}
+
+func TestNewAnthropicClientDoesNotSetStreamClientTimeout(t *testing.T) {
+	client := NewAnthropicClient(&config.Config{
+		BaseURL:               "https://example.com/v1",
+		APIKey:                "test-key",
+		NonStreamingTimeoutMS: 120000,
+	})
+
+	if client.httpClient.Timeout != 120*time.Second {
+		t.Fatalf("httpClient.Timeout = %s, want 120s", client.httpClient.Timeout)
+	}
+	if client.streamHTTPClient == nil {
+		t.Fatal("streamHTTPClient = nil, want non-nil")
+	}
+	if client.streamHTTPClient.Timeout != 0 {
+		t.Fatalf("streamHTTPClient.Timeout = %s, want 0", client.streamHTTPClient.Timeout)
 	}
 }

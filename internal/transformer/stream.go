@@ -25,6 +25,10 @@ func NewStreamHandler() *StreamHandler {
 
 // ProxyStream 读取 OpenAI SSE 流，转换后写入 writer。
 func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model string, ctx context.Context, flusher ...http.Flusher) error {
+	log.Printf("[STREAM] 🎬 开始流式传输: model=%s", model)
+	startTime := time.Now()
+	eventCount := 0
+
 	scanner := bufio.NewScanner(body)
 	// 增大 buffer 以处理大行
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -46,11 +50,13 @@ func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model strin
 			Model:   model,
 		},
 	}, flusher...)
+	eventCount++
 
 	for scanner.Scan() {
 		// 检查上下文取消
 		select {
 		case <-ctx.Done():
+			log.Printf("[STREAM] ⚠️  流式传输被取消")
 			return ctx.Err()
 		default:
 		}
@@ -62,20 +68,23 @@ func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model strin
 
 		data := line[6:] // 去掉 "data: "
 		if data == "[DONE]" {
+			log.Printf("[STREAM] 🏁 收到 [DONE] 信号")
 			if finishSeen {
 				h.writeEvent(w, types.StreamEvent{Type: "message_stop"}, flusher...)
 			} else {
 				for _, event := range state.closeOpenBlock() {
 					h.writeEvent(w, event, flusher...)
+					eventCount++
 				}
 				h.writeDone(w, messageID, model, accumulatedUsage, toolUseState, flusher...)
+				eventCount += 2 // message_delta + message_stop
 			}
 			continue
 		}
 
 		var chunk types.ChatCompletionChunk
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
-			log.Printf("Failed to parse SSE chunk: %v", err)
+			log.Printf("[STREAM] ❌ 解析SSE数据块失败: %v", err)
 			continue
 		}
 
@@ -92,6 +101,7 @@ func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model strin
 				events := state.textDelta(delta.Content)
 				for _, event := range events {
 					h.writeEvent(w, event, flusher...)
+					eventCount++
 				}
 			}
 
@@ -141,6 +151,8 @@ func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model strin
 		}
 	}
 
+	duration := time.Since(startTime)
+	log.Printf("[STREAM] ✅ 流式传输完成: 共%d个事件, 耗时%s", eventCount, duration)
 	return scanner.Err()
 }
 

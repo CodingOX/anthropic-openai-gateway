@@ -90,11 +90,9 @@ func TestHandleMessagesLogsUpstreamFailuresWithContext(t *testing.T) {
 
 	h := NewMessagesHandler(&config.Config{
 		ModelsNeedTransformation: []string{"gpt-4o"},
-		OpenAI: config.OpenAIConfig{
-			BaseURL:   upstream.URL,
-			APIKey:    "test-key",
-			TimeoutMS: 1000,
-		},
+		BaseURL:                  upstream.URL,
+		APIKey:                   "test-key",
+		NonStreamingTimeoutMS:    1000,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{
 		"model":"gpt-4o",
@@ -153,11 +151,9 @@ func TestHandleMessagesPassThroughNonStreaming(t *testing.T) {
 	defer upstream.Close()
 
 	h := NewMessagesHandler(&config.Config{
-		Anthropic: config.AnthropicConfig{
-			BaseURL:   upstream.URL,
-			APIKey:    "sk-ant-test",
-			TimeoutMS: 5000,
-		},
+		BaseURL:               upstream.URL,
+		APIKey:                "sk-ant-test",
+		NonStreamingTimeoutMS: 5000,
 	})
 	// claude-sonnet-4-20250514 不在默认转换列表中 → 透传
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{
@@ -198,11 +194,9 @@ func TestHandleMessagesPassThroughUpstreamErrorStatus(t *testing.T) {
 	defer upstream.Close()
 
 	h := NewMessagesHandler(&config.Config{
-		Anthropic: config.AnthropicConfig{
-			BaseURL:   upstream.URL,
-			APIKey:    "sk-ant-test",
-			TimeoutMS: 5000,
-		},
+		BaseURL:               upstream.URL,
+		APIKey:                "sk-ant-test",
+		NonStreamingTimeoutMS: 5000,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{
 		"model":"claude-opus-4-20250514",
@@ -233,11 +227,9 @@ func TestHandleMessagesPassThroughLogsEvents(t *testing.T) {
 	defer upstream.Close()
 
 	h := NewMessagesHandler(&config.Config{
-		Anthropic: config.AnthropicConfig{
-			BaseURL:   upstream.URL,
-			APIKey:    "sk-ant-test",
-			TimeoutMS: 5000,
-		},
+		BaseURL:               upstream.URL,
+		APIKey:                "sk-ant-test",
+		NonStreamingTimeoutMS: 5000,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{
 		"model":"claude-sonnet-4-20250514",
@@ -283,11 +275,9 @@ func TestHandleMessagesPassThroughStreamingPreservesSSEHeaders(t *testing.T) {
 	defer upstream.Close()
 
 	h := NewMessagesHandler(&config.Config{
-		Anthropic: config.AnthropicConfig{
-			BaseURL:   upstream.URL,
-			APIKey:    "sk-ant-test",
-			TimeoutMS: 5000,
-		},
+		BaseURL:               upstream.URL,
+		APIKey:                "sk-ant-test",
+		NonStreamingTimeoutMS: 5000,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{
 		"model":"claude-sonnet-4-20250514",
@@ -315,11 +305,9 @@ func TestHandleMessagesPassThroughUnreachableUpstream(t *testing.T) {
 	defer restoreLogs()
 
 	h := NewMessagesHandler(&config.Config{
-		Anthropic: config.AnthropicConfig{
-			BaseURL:   "http://127.0.0.1:1",
-			APIKey:    "sk-ant-test",
-			TimeoutMS: 50,
-		},
+		BaseURL:               "http://127.0.0.1:1",
+		APIKey:                "sk-ant-test",
+		NonStreamingTimeoutMS: 50,
 	})
 	// claude-sonnet-4-20250514 不在默认转换列表中 → 透传
 	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{
@@ -339,53 +327,6 @@ func TestHandleMessagesPassThroughUnreachableUpstream(t *testing.T) {
 	for _, want := range []string{
 		"stage=pass_through_started",
 		"stage=upstream_request_failed",
-	} {
-		if !strings.Contains(logs, want) {
-			t.Fatalf("logs missing %q; logs=%s", want, logs)
-		}
-	}
-}
-
-func TestHandleMessagesLogsPromptPreviewWhenEnabled(t *testing.T) {
-	logBuf, restoreLogs := captureLogs(t)
-	defer restoreLogs()
-
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadGateway)
-		_, _ = w.Write([]byte(`{"error":"bad upstream"}`))
-	}))
-	defer upstream.Close()
-
-	h := NewMessagesHandler(&config.Config{
-		ModelsNeedTransformation: []string{"gpt-4o"},
-		LogPromptPreviewOnError:  true,
-		PromptPreviewMaxChars:    96,
-		OpenAI: config.OpenAIConfig{
-			BaseURL:   upstream.URL,
-			APIKey:    "test-key",
-			TimeoutMS: 1000,
-		},
-	})
-	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{
-		"model":"gpt-4o",
-		"system":"System instructions for debugging",
-		"max_tokens":16,
-		"messages":[{"role":"user","content":"hello from the user side with enough text"}]
-	}`))
-	rec := httptest.NewRecorder()
-
-	h.HandleMessages(rec, req)
-
-	if rec.Code != http.StatusBadGateway {
-		t.Fatalf("status = %d, want 502; body=%s", rec.Code, rec.Body.String())
-	}
-
-	logs := logBuf.String()
-	for _, want := range []string{
-		"stage=upstream_request_failed",
-		"prompt_preview=",
-		"System instructions",
-		"hello from the user",
 	} {
 		if !strings.Contains(logs, want) {
 			t.Fatalf("logs missing %q; logs=%s", want, logs)

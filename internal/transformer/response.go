@@ -4,6 +4,7 @@ package transformer
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 
 	"anthropic-openai-gateway/pkg/types"
 )
@@ -18,6 +19,9 @@ func NewResponseTransformer() *ResponseTransformer {
 
 // TransformResponse 执行 OpenAI → Anthropic 非流式响应转换。
 func (t *ResponseTransformer) TransformResponse(or *types.ChatCompletionResponse, model string) (*types.MessageResponse, error) {
+	log.Printf("[TRANSFORMER] 🔄 开始转换 OpenAI → Anthropic")
+	log.Printf("[TRANSFORMER] 📝 响应ID: %s, 模型: %s, 选项数: %d", or.ID, model, len(or.Choices))
+
 	resp := &types.MessageResponse{
 		ID:    or.ID,
 		Type:  "message",
@@ -26,16 +30,19 @@ func (t *ResponseTransformer) TransformResponse(or *types.ChatCompletionResponse
 	}
 
 	if len(or.Choices) == 0 {
+		log.Printf("[TRANSFORMER] ❌ OpenAI响应没有choices")
 		return nil, fmt.Errorf("openai response has no choices")
 	}
 
 	choice := or.Choices[0]
 	contentBlocks := t.convertContent(or.ID, choice)
 	resp.Content = contentBlocks
+	log.Printf("[TRANSFORMER] ✅ 内容转换完成: %d个内容块", len(contentBlocks))
 
 	// 转换停止原因
 	stopReason := t.convertFinishReason(choice.FinishReason)
 	resp.StopReason = &stopReason
+	log.Printf("[TRANSFORMER] 🛑 停止原因: %s → %s", choice.FinishReason, stopReason)
 
 	// 转换用量统计
 	if or.Usage != nil {
@@ -45,8 +52,11 @@ func (t *ResponseTransformer) TransformResponse(or *types.ChatCompletionResponse
 			CacheReadInputTokens:     or.Usage.PromptCacheHitTokens,
 			CacheCreationInputTokens: or.Usage.PromptCacheMissTokens,
 		}
+		log.Printf("[TRANSFORMER] 📊 用量统计: input=%d, output=%d, cache_read=%d, cache_creation=%d",
+			resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 	}
 
+	log.Printf("[TRANSFORMER] ✅ 响应转换完成")
 	return resp, nil
 }
 

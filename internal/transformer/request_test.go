@@ -153,3 +153,37 @@ func TestTransformRequestUsesDeveloperRoleForOAndGPT5Series(t *testing.T) {
 		})
 	}
 }
+
+func TestTransformRequestUsesMaxTokensForUpstreamCompatibility(t *testing.T) {
+	req := &types.MessageRequest{
+		Model:     "deepseek-v4-pro",
+		MaxTokens: 50,
+		Messages:  []types.Message{{Role: "user", Content: "hi"}},
+	}
+
+	openaiReq, err := NewRequestTransformer().TransformRequest(req)
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+
+	if openaiReq.MaxTokens == nil {
+		t.Fatal("MaxTokens = nil, want non-nil")
+	}
+	if got, want := *openaiReq.MaxTokens, 50; got != want {
+		t.Fatalf("MaxTokens = %d, want %d", got, want)
+	}
+	if openaiReq.MaxCompletionTokens != nil {
+		t.Fatalf("MaxCompletionTokens = %v, want nil", *openaiReq.MaxCompletionTokens)
+	}
+
+	body, err := json.Marshal(openaiReq)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if !containsJSONField(body, "max_tokens") {
+		t.Fatalf("serialized request missing max_tokens: %s", body)
+	}
+	if containsJSONField(body, "max_completion_tokens") {
+		t.Fatalf("serialized request should not contain max_completion_tokens: %s", body)
+	}
+}

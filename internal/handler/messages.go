@@ -33,16 +33,15 @@ type MessagesHandler struct {
 }
 
 type requestLogContext struct {
-	RequestID     string
-	Method        string
-	Path          string
-	Model         string
-	Streaming     bool
-	MessageCount  int
-	ToolCount     int
-	HasSystem     bool
-	RoleSummary   string
-	PromptPreview string
+	RequestID    string
+	Method       string
+	Path         string
+	Model        string
+	Streaming    bool
+	MessageCount int
+	ToolCount    int
+	HasSystem    bool
+	RoleSummary  string
 }
 
 var requestIDSeq atomic.Uint64
@@ -220,7 +219,7 @@ func (h *MessagesHandler) handleStreaming(w http.ResponseWriter, r *http.Request
 func (h *MessagesHandler) handleNonStreaming(w http.ResponseWriter, r *http.Request, anthropicReq *types.MessageRequest, requestLog requestLogContext) {
 	startedAt := time.Now()
 	ctx, cancel := context.WithTimeout(r.Context(),
-		time.Duration(h.config.OpenAI.TimeoutMS)*time.Millisecond)
+		time.Duration(h.config.NonStreamingTimeoutMS)*time.Millisecond)
 	defer cancel()
 
 	// Anthropic → OpenAI 请求转换
@@ -278,7 +277,7 @@ func (h *MessagesHandler) handlePassThrough(w http.ResponseWriter, r *http.Reque
 		fmt.Sprintf("upstream_model=%s", anthropicReq.Model))
 
 	// 将原始请求体转发到 Anthropic API
-	resp, err := h.anthropicClient.ForwardMessage(ctx, bytes.NewReader(rawBody), r.Header)
+	resp, err := h.anthropicClient.ForwardMessage(ctx, bytes.NewReader(rawBody), r.Header, isStreaming)
 	if err != nil {
 		h.logUpstreamError(requestLog, err)
 		h.sendError(w, http.StatusBadGateway,
@@ -399,9 +398,6 @@ func generateRequestID() string {
 
 func (h *MessagesHandler) enrichRequestLog(requestLog requestLogContext, req *types.MessageRequest) requestLogContext {
 	requestLog = requestLog.withAnthropicRequest(req)
-	if h.config != nil && h.config.LogPromptPreviewOnError {
-		requestLog.PromptPreview = buildPromptPreview(req, normalizePromptPreviewMaxChars(h.config.PromptPreviewMaxChars))
-	}
 	return requestLog
 }
 
@@ -472,9 +468,6 @@ func logRequestEvent(level string, requestLog requestLogContext, stage string, e
 	if requestLog.RoleSummary != "" {
 		fields = append(fields, fmt.Sprintf("roles=%s", requestLog.RoleSummary))
 	}
-	if level == "error" && requestLog.PromptPreview != "" {
-		fields = append(fields, fmt.Sprintf("prompt_preview=%q", requestLog.PromptPreview))
-	}
 	fields = append(fields, extraFields...)
 	log.Printf(strings.Join(fields, " "))
 }
@@ -511,55 +504,6 @@ func summarizeRoles(messages []types.Message) string {
 		parts = append(parts, fmt.Sprintf("%s:%d", role, roleCounts[role]))
 	}
 	return strings.Join(parts, ",")
-}
-
-func normalizePromptPreviewMaxChars(limit int) int {
-	if limit <= 0 {
-		return 240
-	}
-	return limit
-}
-
-func buildPromptPreview(req *types.MessageRequest, limit int) string {
-	parts := make([]string, 0, len(req.Messages)+1)
-	if systemText := extractTextPreview(req.System); systemText != "" {
-		parts = append(parts, "system:"+systemText)
-	}
-	for _, msg := range req.Messages {
-		text := extractTextPreview(msg.Content)
-		if text == "" {
-			continue
-		}
-		parts = append(parts, fmt.Sprintf("%s:%s", msg.Role, text))
-	}
-	return truncateString(strings.Join(parts, " | "), limit)
-}
-
-func extractTextPreview(content interface{}) string {
-	switch value := content.(type) {
-	case string:
-		return strings.TrimSpace(value)
-	case []interface{}:
-		parts := make([]string, 0, len(value))
-		for _, item := range value {
-			if text := extractTextPreview(item); text != "" {
-				parts = append(parts, text)
-			}
-		}
-		return strings.Join(parts, " ")
-	case map[string]interface{}:
-		parts := make([]string, 0, 3)
-		for _, key := range []string{"text", "thinking", "content"} {
-			if nested, ok := value[key]; ok {
-				if text := extractTextPreview(nested); text != "" {
-					parts = append(parts, text)
-				}
-			}
-		}
-		return strings.Join(parts, " ")
-	default:
-		return ""
-	}
 }
 
 func truncateString(value string, limit int) string {

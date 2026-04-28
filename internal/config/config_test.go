@@ -7,59 +7,70 @@ import (
 	"testing"
 )
 
-func TestLoadUsesEnvOnlyAndIgnoresConfigFile(t *testing.T) {
+func runWithoutDotEnv(t *testing.T) {
+	t.Helper()
+
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd() error = %v", err)
+	}
+	tmpDir := t.TempDir()
+	if err := os.Chdir(tmpDir); err != nil {
+		t.Fatalf("os.Chdir(%q) error = %v", tmpDir, err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(wd); err != nil {
+			t.Fatalf("os.Chdir(%q) cleanup error = %v", wd, err)
+		}
+	})
+}
+
+func TestLoadUsesEnvAndDefaults(t *testing.T) {
+	runWithoutDotEnv(t)
+
 	badConfigPath := filepath.Join(t.TempDir(), "broken.json")
 	if err := os.WriteFile(badConfigPath, []byte("{"), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	t.Setenv("CONFIG_FILE", badConfigPath)
-	t.Setenv("LISTEN_HOST", "0.0.0.0")
 	t.Setenv("LISTEN_PORT", "8080")
-	t.Setenv("OPENAI_BASE_URL", "https://example.com/v1")
-	t.Setenv("OPENAI_API_KEY", "sk-test")
-	t.Setenv("OPENAI_TIMEOUT_MS", "180000")
+	t.Setenv("OPENCODE_API_KEY", "sk-test")
+	t.Setenv("BASE_URL", "https://example.com/v1")
+	t.Setenv("NON_STREAM_TIMEOUT_MS", "180000")
 	t.Setenv("MODELS_NEED_TRANSFORMATION", "gpt-5,o3-mini")
-	t.Setenv("LOG_PROMPT_PREVIEW_ON_ERROR", "true")
-	t.Setenv("PROMPT_PREVIEW_MAX_CHARS", "96")
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v, want nil", err)
 	}
 
-	if cfg.ListenHost != "0.0.0.0" {
-		t.Fatalf("ListenHost = %q, want %q", cfg.ListenHost, "0.0.0.0")
-	}
 	if cfg.ListenPort != 8080 {
 		t.Fatalf("ListenPort = %d, want %d", cfg.ListenPort, 8080)
 	}
-	if cfg.OpenAI.BaseURL != "https://example.com/v1" {
-		t.Fatalf("OpenAI.BaseURL = %q, want %q", cfg.OpenAI.BaseURL, "https://example.com/v1")
+	if cfg.APIKey != "sk-test" {
+		t.Fatalf("APIKey = %q, want sk-test", cfg.APIKey)
 	}
-	if cfg.OpenAI.APIKey != "sk-test" {
-		t.Fatalf("OpenAI.APIKey = %q, want %q", cfg.OpenAI.APIKey, "sk-test")
+	if cfg.BaseURL != "https://example.com/v1" {
+		t.Fatalf("BaseURL = %q, want https://example.com/v1", cfg.BaseURL)
 	}
-	if cfg.OpenAI.TimeoutMS != 180000 {
-		t.Fatalf("OpenAI.TimeoutMS = %d, want %d", cfg.OpenAI.TimeoutMS, 180000)
+	if cfg.NonStreamingTimeoutMS != 180000 {
+		t.Fatalf("NonStreamingTimeoutMS = %d, want 180000", cfg.NonStreamingTimeoutMS)
 	}
 	if !reflect.DeepEqual(cfg.ModelsNeedTransformation, []string{"gpt-5", "o3-mini"}) {
 		t.Fatalf("ModelsNeedTransformation = %v, want %v", cfg.ModelsNeedTransformation, []string{"gpt-5", "o3-mini"})
 	}
-	if !cfg.LogPromptPreviewOnError {
-		t.Fatalf("LogPromptPreviewOnError = false, want true")
-	}
-	if cfg.PromptPreviewMaxChars != 96 {
-		t.Fatalf("PromptPreviewMaxChars = %d, want %d", cfg.PromptPreviewMaxChars, 96)
-	}
 }
 
 func TestLoadUsesDefaultModelsWhenEnvUnset(t *testing.T) {
-	t.Setenv("CONFIG_FILE", filepath.Join(t.TempDir(), "missing.json"))
+	runWithoutDotEnv(t)
 
 	cfg, err := Load()
 	if err != nil {
 		t.Fatalf("Load() error = %v, want nil", err)
+	}
+
+	if cfg.NonStreamingTimeoutMS != 120000 {
+		t.Fatalf("NonStreamingTimeoutMS = %d, want 120000", cfg.NonStreamingTimeoutMS)
 	}
 
 	want := []string{"gpt-4.1", "gpt-4o", "gpt-4o-mini", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-5", "o3", "o3-mini", "o4-mini"}
@@ -69,6 +80,8 @@ func TestLoadUsesDefaultModelsWhenEnvUnset(t *testing.T) {
 }
 
 func TestLoadKeepsDefaultModelsWhenEnvIsBlankList(t *testing.T) {
+	runWithoutDotEnv(t)
+
 	t.Setenv("MODELS_NEED_TRANSFORMATION", " , , ")
 
 	cfg, err := Load()
@@ -81,17 +94,33 @@ func TestLoadKeepsDefaultModelsWhenEnvIsBlankList(t *testing.T) {
 	}
 }
 
-func TestOverrideFromEnvSetsPromptPreviewFlags(t *testing.T) {
-	t.Setenv("LOG_PROMPT_PREVIEW_ON_ERROR", "true")
-	t.Setenv("PROMPT_PREVIEW_MAX_CHARS", "96")
+func TestLoadUsesLegacyTimeoutEnvWhenNewNameUnset(t *testing.T) {
+	runWithoutDotEnv(t)
 
-	cfg := &Config{}
-	overrideFromEnv(cfg)
+	t.Setenv("TIMEOUT_MS", "9000")
 
-	if !cfg.LogPromptPreviewOnError {
-		t.Fatalf("LogPromptPreviewOnError = false, want true")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
 	}
-	if cfg.PromptPreviewMaxChars != 96 {
-		t.Fatalf("PromptPreviewMaxChars = %d, want 96", cfg.PromptPreviewMaxChars)
+
+	if cfg.NonStreamingTimeoutMS != 9000 {
+		t.Fatalf("NonStreamingTimeoutMS = %d, want 9000", cfg.NonStreamingTimeoutMS)
+	}
+}
+
+func TestLoadPrefersNewTimeoutEnvOverLegacyAlias(t *testing.T) {
+	runWithoutDotEnv(t)
+
+	t.Setenv("TIMEOUT_MS", "9000")
+	t.Setenv("NON_STREAM_TIMEOUT_MS", "12000")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+
+	if cfg.NonStreamingTimeoutMS != 12000 {
+		t.Fatalf("NonStreamingTimeoutMS = %d, want 12000", cfg.NonStreamingTimeoutMS)
 	}
 }

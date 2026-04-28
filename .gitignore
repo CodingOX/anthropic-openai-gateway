@@ -6,3 +6,4 @@ oc-go-cc/
 .idea/
 .env
 cmd/debugprobe
+.worktrees/

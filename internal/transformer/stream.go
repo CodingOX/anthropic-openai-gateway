@@ -38,6 +38,7 @@ func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model strin
 	toolUseState := make(map[int]*toolUseBuilder) // index → builder
 	messageID := ""
 	var accumulatedUsage *types.Usage
+	stopReason := "end_turn"
 	finishSeen := false
 
 	h.writeEvent(w, types.StreamEvent{
@@ -69,16 +70,14 @@ func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model strin
 		data := line[6:] // 去掉 "data: "
 		if data == "[DONE]" {
 			log.Printf("[STREAM] 🏁 收到 [DONE] 信号")
-			if finishSeen {
-				h.writeEvent(w, types.StreamEvent{Type: "message_stop"}, flusher...)
-			} else {
+			if !finishSeen {
 				for _, event := range state.closeOpenBlock() {
 					h.writeEvent(w, event, flusher...)
 					eventCount++
 				}
-				h.writeDone(w, messageID, model, accumulatedUsage, toolUseState, flusher...)
-				eventCount += 2 // message_delta + message_stop
 			}
+			h.writeDone(w, messageID, model, &stopReason, accumulatedUsage, toolUseState, flusher...)
+			eventCount += 2 // message_delta + message_stop
 			continue
 		}
 
@@ -131,22 +130,17 @@ func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model strin
 				for _, event := range closeToolBlocks(toolUseState) {
 					h.writeEvent(w, event, flusher...)
 				}
-				stopReason := h.convertStreamFinishReason(*choice.FinishReason)
-				event := types.StreamEvent{
-					Type: "message_delta",
-					Delta: &types.DeltaContent{
-						StopReason: &stopReason,
-					},
-				}
-				h.writeEvent(w, event, flusher...)
+				stopReason = h.convertStreamFinishReason(*choice.FinishReason)
 			}
 		}
 
 		// 收集 usage（通常只在最后一个 chunk 出现）
 		if chunk.Usage != nil {
 			accumulatedUsage = &types.Usage{
-				InputTokens:  chunk.Usage.PromptTokens,
-				OutputTokens: chunk.Usage.CompletionTokens,
+				InputTokens:              chunk.Usage.PromptTokens,
+				OutputTokens:             chunk.Usage.CompletionTokens,
+				CacheReadInputTokens:     chunk.Usage.PromptCacheHitTokens,
+				CacheCreationInputTokens: chunk.Usage.PromptCacheMissTokens,
 			}
 		}
 	}
@@ -179,16 +173,15 @@ func (h *StreamHandler) writeEvent(w io.Writer, event types.StreamEvent, flusher
 }
 
 // writeDone 发送流结束事件。
-func (h *StreamHandler) writeDone(w io.Writer, messageID, model string, usage *types.Usage, state map[int]*toolUseBuilder, flusher ...http.Flusher) {
+func (h *StreamHandler) writeDone(w io.Writer, messageID, model string, stopReason *string, usage *types.Usage, state map[int]*toolUseBuilder, flusher ...http.Flusher) {
 	// 发送所有 content_block_stop
 	for _, event := range closeToolBlocks(state) {
 		h.writeEvent(w, event, flusher...)
 	}
 
 	// 发送 message_delta（含 stop_reason 和 usage）
-	stopReason := "end_turn"
 	delta := &types.DeltaContent{
-		StopReason: &stopReason,
+		StopReason: stopReason,
 	}
 	messageDelta := types.StreamEvent{
 		Type:  "message_delta",

@@ -86,6 +86,44 @@ func TestProxyStreamEmitsThinkingThenText(t *testing.T) {
 	}
 }
 
+func TestProxyStreamEmitsCacheUsageInMessageDelta(t *testing.T) {
+	var out bytes.Buffer
+	body := sseBody(
+		`{"id":"chunk_1","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}`,
+		`{"id":"chunk_1","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":11,"completion_tokens":7,"prompt_cache_hit_tokens":5,"prompt_cache_miss_tokens":6}}`,
+		`[DONE]`,
+	)
+
+	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", context.Background()); err != nil {
+		t.Fatalf("ProxyStream() error = %v", err)
+	}
+
+	events := parseEvents(t, out.String())
+	if len(events) < 2 {
+		t.Fatalf("event count = %d, want at least 2", len(events))
+	}
+
+	messageDelta := events[len(events)-2]
+	if messageDelta.Type != "message_delta" {
+		t.Fatalf("final delta type = %q, want message_delta", messageDelta.Type)
+	}
+	if messageDelta.Usage == nil {
+		t.Fatalf("message_delta usage = nil")
+	}
+	if messageDelta.Usage.InputTokens != 11 {
+		t.Fatalf("InputTokens = %d, want 11", messageDelta.Usage.InputTokens)
+	}
+	if messageDelta.Usage.OutputTokens != 7 {
+		t.Fatalf("OutputTokens = %d, want 7", messageDelta.Usage.OutputTokens)
+	}
+	if messageDelta.Usage.CacheReadInputTokens != 5 {
+		t.Fatalf("CacheReadInputTokens = %d, want 5", messageDelta.Usage.CacheReadInputTokens)
+	}
+	if messageDelta.Usage.CacheCreationInputTokens != 6 {
+		t.Fatalf("CacheCreationInputTokens = %d, want 6", messageDelta.Usage.CacheCreationInputTokens)
+	}
+}
+
 func TestProxyStreamStopsToolBlockWhenFinishReasonArrives(t *testing.T) {
 	var out bytes.Buffer
 	idx := 0

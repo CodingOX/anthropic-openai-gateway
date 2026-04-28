@@ -136,12 +136,8 @@ func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model strin
 
 		// 收集 usage（通常只在最后一个 chunk 出现）
 		if chunk.Usage != nil {
-			accumulatedUsage = &types.Usage{
-				InputTokens:              chunk.Usage.PromptTokens,
-				OutputTokens:             chunk.Usage.CompletionTokens,
-				CacheReadInputTokens:     chunk.Usage.PromptCacheHitTokens,
-				CacheCreationInputTokens: chunk.Usage.PromptCacheMissTokens,
-			}
+			normalized := normalizeOpenAIUsage(chunk.Usage)
+			accumulatedUsage = &normalized
 		}
 	}
 

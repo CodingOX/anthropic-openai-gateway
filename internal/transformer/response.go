@@ -46,12 +46,7 @@ func (t *ResponseTransformer) TransformResponse(or *types.ChatCompletionResponse
 
 	// 转换用量统计
 	if or.Usage != nil {
-		resp.Usage = types.Usage{
-			InputTokens:              or.Usage.PromptTokens,
-			OutputTokens:             or.Usage.CompletionTokens,
-			CacheReadInputTokens:     or.Usage.PromptCacheHitTokens,
-			CacheCreationInputTokens: or.Usage.PromptCacheMissTokens,
-		}
+		resp.Usage = normalizeOpenAIUsage(or.Usage)
 		log.Printf("[TRANSFORMER] 📊 用量统计: input=%d, output=%d, cache_read=%d, cache_creation=%d",
 			resp.Usage.InputTokens, resp.Usage.OutputTokens, resp.Usage.CacheReadInputTokens, resp.Usage.CacheCreationInputTokens)
 	}
@@ -144,4 +139,50 @@ func (t *ResponseTransformer) convertFinishReason(reason string) string {
 	default:
 		return "end_turn"
 	}
+}
+
+// normalizeOpenAIUsage 兼容不同上游的 usage 字段形态，统一转换为 Anthropic usage。
+func normalizeOpenAIUsage(usage *types.ChatUsage) types.Usage {
+	if usage == nil {
+		return types.Usage{}
+	}
+
+	outputTokens := usage.CompletionTokens
+	if outputTokens == 0 && usage.TotalTokens >= usage.PromptTokens {
+		outputTokens = usage.TotalTokens - usage.PromptTokens
+	}
+
+	cacheReadTokens := firstNonZero(
+		usage.PromptCacheHitTokens,
+		usage.CacheReadInputTokens,
+		usage.CachedTokens,
+		cachedTokensFromDetails(usage.PromptTokensDetails),
+	)
+	cacheCreationTokens := firstNonZero(
+		usage.PromptCacheMissTokens,
+		usage.CacheCreationInputTokens,
+	)
+
+	return types.Usage{
+		InputTokens:              usage.PromptTokens,
+		OutputTokens:             outputTokens,
+		CacheReadInputTokens:     cacheReadTokens,
+		CacheCreationInputTokens: cacheCreationTokens,
+	}
+}
+
+func cachedTokensFromDetails(details *types.PromptTokensDetail) int {
+	if details == nil {
+		return 0
+	}
+	return details.CachedTokens
+}
+
+func firstNonZero(values ...int) int {
+	for _, value := range values {
+		if value != 0 {
+			return value
+		}
+	}
+	return 0
 }

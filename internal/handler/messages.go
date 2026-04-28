@@ -2,10 +2,12 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"sort"
@@ -24,6 +26,7 @@ import (
 type MessagesHandler struct {
 	config              *config.Config
 	openaiClient        *client.OpenAIClient
+	anthropicClient     *client.AnthropicClient
 	requestTransformer  *transformer.RequestTransformer
 	responseTransformer *transformer.ResponseTransformer
 	streamHandler       *transformer.StreamHandler
@@ -83,6 +86,7 @@ func NewMessagesHandler(cfg *config.Config) *MessagesHandler {
 	return &MessagesHandler{
 		config:              cfg,
 		openaiClient:        client.NewOpenAIClient(cfg),
+		anthropicClient:     client.NewAnthropicClient(cfg),
 		requestTransformer:  transformer.NewRequestTransformer(),
 		responseTransformer: transformer.NewResponseTransformer(),
 		streamHandler:       transformer.NewStreamHandler(),
@@ -102,9 +106,19 @@ func (h *MessagesHandler) HandleMessages(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// 预读原始请求体，用于透传模式
+	rawBody, err := io.ReadAll(r.Body)
+	if err != nil {
+		h.logError(requestLog, "read_request_body",
+			fmt.Sprintf("status=%d", http.StatusBadRequest),
+			fmt.Sprintf("error=%q", fmt.Sprintf("failed to read request body: %v", err)))
+		h.sendError(w, http.StatusBadRequest, fmt.Sprintf("failed to read request body: %v", err))
+		return
+	}
+
 	// 解析 Anthropic 请求体
 	var anthropicReq types.MessageRequest
-	if err := json.NewDecoder(r.Body).Decode(&anthropicReq); err != nil {
+	if err := json.Unmarshal(rawBody, &anthropicReq); err != nil {
 		h.logError(requestLog, "decode_request",
 			fmt.Sprintf("status=%d", http.StatusBadRequest),
 			fmt.Sprintf("error=%q", fmt.Sprintf("invalid request body: %v", err)))
@@ -125,13 +139,9 @@ func (h *MessagesHandler) HandleMessages(w http.ResponseWriter, r *http.Request)
 
 	h.logInfo(requestLog, "request_received")
 
-	// 判断是否需要转换
+	// 不在转换列表中的模型，透传到 Anthropic API
 	if !h.needsTransformation(anthropicReq.Model) {
-		h.logError(requestLog, "pass_through_not_supported",
-			fmt.Sprintf("status=%d", http.StatusNotImplemented),
-			fmt.Sprintf("error=%q", "pass-through mode not implemented for non-transform models"))
-		h.sendError(w, http.StatusNotImplemented,
-			"pass-through mode not implemented for non-transform models")
+		h.handlePassThrough(w, r, rawBody, &anthropicReq, requestLog)
 		return
 	}
 
@@ -256,6 +266,76 @@ func (h *MessagesHandler) handleNonStreaming(w http.ResponseWriter, r *http.Requ
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(anthropicResp)
+}
+
+// handlePassThrough 将请求原样转发到 Anthropic API，不做格式转换。
+func (h *MessagesHandler) handlePassThrough(w http.ResponseWriter, r *http.Request, rawBody []byte, anthropicReq *types.MessageRequest, requestLog requestLogContext) {
+	ctx := r.Context()
+	startedAt := time.Now()
+	isStreaming := anthropicReq.Stream != nil && *anthropicReq.Stream
+
+	h.logInfo(requestLog, "pass_through_started",
+		fmt.Sprintf("upstream_model=%s", anthropicReq.Model))
+
+	// 将原始请求体转发到 Anthropic API
+	resp, err := h.anthropicClient.ForwardMessage(ctx, bytes.NewReader(rawBody), r.Header)
+	if err != nil {
+		h.logUpstreamError(requestLog, err)
+		h.sendError(w, http.StatusBadGateway,
+			fmt.Sprintf("upstream request failed: %v", err))
+		return
+	}
+	defer resp.Body.Close()
+
+	// 复制上游响应头
+	for key, values := range resp.Header {
+		for _, value := range values {
+			w.Header().Add(key, value)
+		}
+	}
+	w.WriteHeader(resp.StatusCode)
+
+	if isStreaming {
+		// 流式透传：逐块写入并 flush，确保 SSE 事件不被缓冲
+		flusher, ok := w.(http.Flusher)
+		if !ok {
+			h.logError(requestLog, "pass_through_streaming_not_supported",
+				fmt.Sprintf("error=%q", "streaming not supported by response writer"))
+			return
+		}
+		buf := make([]byte, 4096)
+		for {
+			n, readErr := resp.Body.Read(buf)
+			if n > 0 {
+				if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+					h.logError(requestLog, "pass_through_stream_write",
+						fmt.Sprintf("error=%q", writeErr.Error()))
+					return
+				}
+				flusher.Flush()
+			}
+			if readErr != nil {
+				if readErr != io.EOF {
+					h.logError(requestLog, "pass_through_stream_read",
+						fmt.Sprintf("error=%q", readErr.Error()))
+				}
+				break
+			}
+		}
+		h.logInfo(requestLog, "pass_through_stream_completed",
+			fmt.Sprintf("duration_ms=%d", time.Since(startedAt).Milliseconds()))
+	} else {
+		// 非流式透传：直接复制响应体
+		written, copyErr := io.Copy(w, resp.Body)
+		if copyErr != nil {
+			h.logError(requestLog, "pass_through_copy_response",
+				fmt.Sprintf("error=%q", copyErr.Error()))
+			return
+		}
+		h.logInfo(requestLog, "pass_through_completed",
+			fmt.Sprintf("duration_ms=%d", time.Since(startedAt).Milliseconds()),
+			fmt.Sprintf("response_bytes=%d", written))
+	}
 }
 
 // sendError 发送 Anthropic 格式的错误响应。

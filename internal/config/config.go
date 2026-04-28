@@ -22,16 +22,24 @@ var defaultModelsNeedTransformation = []string{
 
 // Config 网关全部配置。
 type Config struct {
-	ListenHost               string       `json:"listen_host"`
-	ListenPort               int          `json:"listen_port"`
-	OpenAI                   OpenAIConfig `json:"openai"`
-	ModelsNeedTransformation []string     `json:"models_need_transformation"`
-	LogPromptPreviewOnError  bool         `json:"log_prompt_preview_on_error"`
-	PromptPreviewMaxChars    int          `json:"prompt_preview_max_chars"`
+	ListenHost               string          `json:"listen_host"`
+	ListenPort               int             `json:"listen_port"`
+	OpenAI                   OpenAIConfig    `json:"openai"`
+	Anthropic                AnthropicConfig `json:"anthropic"`
+	ModelsNeedTransformation []string        `json:"models_need_transformation"`
+	LogPromptPreviewOnError  bool            `json:"log_prompt_preview_on_error"`
+	PromptPreviewMaxChars    int             `json:"prompt_preview_max_chars"`
 }
 
 // OpenAIConfig OpenAI 后端配置。
 type OpenAIConfig struct {
+	BaseURL   string `json:"base_url"`
+	APIKey    string `json:"api_key"`
+	TimeoutMS int    `json:"timeout_ms"`
+}
+
+// AnthropicConfig Anthropic 后端配置（用于透传模式）。
+type AnthropicConfig struct {
 	BaseURL   string `json:"base_url"`
 	APIKey    string `json:"api_key"`
 	TimeoutMS int    `json:"timeout_ms"`
@@ -46,6 +54,10 @@ func Load() (*Config, error) {
 		PromptPreviewMaxChars:    240,
 		OpenAI: OpenAIConfig{
 			BaseURL:   "https://api.openai.com/v1",
+			TimeoutMS: 120000,
+		},
+		Anthropic: AnthropicConfig{
+			BaseURL:   "https://api.anthropic.com/v1",
 			TimeoutMS: 120000,
 		},
 	}
@@ -77,8 +89,21 @@ func overrideFromEnv(cfg *Config) {
 			cfg.OpenAI.TimeoutMS = t
 		}
 	}
+	if v := os.Getenv("ANTHROPIC_BASE_URL"); v != "" {
+		cfg.Anthropic.BaseURL = v
+	}
+	if v := os.Getenv("ANTHROPIC_API_KEY"); v != "" {
+		cfg.Anthropic.APIKey = v
+	}
+	if v := os.Getenv("ANTHROPIC_TIMEOUT_MS"); v != "" {
+		if t, err := strconv.Atoi(v); err == nil {
+			cfg.Anthropic.TimeoutMS = t
+		}
+	}
 	if v := os.Getenv("MODELS_NEED_TRANSFORMATION"); v != "" {
-		cfg.ModelsNeedTransformation = splitCommaSeparatedValues(v)
+		if models := splitCommaSeparatedValues(v); len(models) > 0 {
+			cfg.ModelsNeedTransformation = models
+		}
 	}
 	if v := os.Getenv("LOG_PROMPT_PREVIEW_ON_ERROR"); v != "" {
 		if enabled, err := strconv.ParseBool(v); err == nil {

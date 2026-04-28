@@ -68,6 +68,19 @@ func TestLoadUsesDefaultModelsWhenEnvUnset(t *testing.T) {
 	}
 }
 
+func TestLoadKeepsDefaultModelsWhenEnvIsBlankList(t *testing.T) {
+	t.Setenv("MODELS_NEED_TRANSFORMATION", " , , ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v, want nil", err)
+	}
+
+	if !reflect.DeepEqual(cfg.ModelsNeedTransformation, defaultModelsNeedTransformation) {
+		t.Fatalf("ModelsNeedTransformation = %v, want %v", cfg.ModelsNeedTransformation, defaultModelsNeedTransformation)
+	}
+}
+
 func TestOverrideFromEnvSetsPromptPreviewFlags(t *testing.T) {
 	t.Setenv("LOG_PROMPT_PREVIEW_ON_ERROR", "true")
 	t.Setenv("PROMPT_PREVIEW_MAX_CHARS", "96")

@@ -118,3 +118,38 @@ func jsonContains(body []byte, needle string) bool {
 	}
 	return false
 }
+
+func TestTransformRequestUsesDeveloperRoleForOAndGPT5Series(t *testing.T) {
+	tests := []struct {
+		name  string
+		model string
+		want  string
+	}{
+		{"gpt-5 uses developer", "gpt-5", "developer"},
+		{"gpt-5.4 uses developer", "gpt-5.4", "developer"},
+		{"gpt-5-mini uses developer", "gpt-5-mini", "developer"},
+		{"o3 uses developer", "o3", "developer"},
+		{"o4-mini uses developer", "o4-mini", "developer"},
+		{"gpt-4o uses system", "gpt-4o", "system"},
+		{"gpt-4.1 uses system", "gpt-4.1", "system"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &types.MessageRequest{
+				Model:     tt.model,
+				System:    "You are helpful.",
+				MaxTokens: 128,
+				Messages:  []types.Message{{Role: "user", Content: "hi"}},
+			}
+			got, err := NewRequestTransformer().TransformRequest(req)
+			if err != nil {
+				t.Fatalf("TransformRequest() error = %v", err)
+			}
+			if len(got.Messages) == 0 || got.Messages[0].Role != tt.want {
+				t.Fatalf("first message role = %q, want %q for model %s",
+					got.Messages[0].Role, tt.want, tt.model)
+			}
+		})
+	}
+}

@@ -46,11 +46,11 @@ func (t *RequestTransformer) TransformRequest(ar *types.MessageRequest) (*types.
 		req.ToolChoice = t.convertToolChoice(ar.ToolChoice)
 	}
 
-	// 注入 system prompt 作为第一条 developer 消息（OpenAI o-series 模型使用 developer role）
-	// 对于非 o-series，使用 system role
+	// 注入 system prompt 作为第一条 developer 消息。
+	// OpenAI o-series 和 gpt-5 系列模型推荐使用 developer role，其余使用 system role。
 	if systemMsg != "" {
 		systemRole := "system"
-		if strings.HasPrefix(ar.Model, "o") {
+		if strings.HasPrefix(ar.Model, "o") || strings.HasPrefix(ar.Model, "gpt-5") {
 			systemRole = "developer"
 		}
 		systemMessage := types.ChatMessage{

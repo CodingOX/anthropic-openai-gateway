@@ -90,7 +90,7 @@ claude
 | 端点 | 说明 |
 |------|------|
 | `POST /v1/messages` | 主端点，处理消息请求（流式/非流式） |
-| `POST /v1/messages/count_tokens` | token 计数估算（兼容 Anthropic 接口形状） |
+| `POST /v1/messages/count_tokens` | 基于本地 tiktoken 字典的 token 计数估算 |
 | `GET /health` | 健康检查 |
 
 ## 格式转换映射
@@ -183,4 +183,4 @@ curl http://127.0.0.1:3456/health
 - **Anthropic extended thinking**：基本 thinking 文本已支持转换，但 `signature`、`redacted_thinking` 等扩展字段会被忽略
 - **缓存控制**：Anthropic 的 `cache_control` 块会被忽略
 - **top_k**：Anthropic 的 `top_k` 参数目前未映射到 OpenAI 格式
-- **count_tokens**：使用 tiktoken 精确计数，转换路径模型结果与上游一致；透传模型使用 cl100k_base 近似。tiktoken 不可用时自动降级为字符估算
+- **count_tokens**：使用内嵌 tiktoken 字典做本地估算，不会在运行时下载字典；图片、缓存控制等 Anthropic 特有开销仍可能与官方计费存在差异

@@ -6,6 +6,29 @@ import (
 	"anthropic-openai-gateway/pkg/types"
 )
 
+func TestEmbeddedBPELoaderLoadsRequiredEncodings(t *testing.T) {
+	loader := embeddedBPELoader{}
+	cases := []struct {
+		name    string
+		minSize int
+	}{
+		{"https://openaipublic.blob.core.windows.net/encodings/o200k_base.tiktoken", 100000},
+		{"https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken", 100000},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ranks, err := loader.LoadTiktokenBpe(tc.name)
+			if err != nil {
+				t.Fatalf("LoadTiktokenBpe() error = %v", err)
+			}
+			if got := len(ranks); got < tc.minSize {
+				t.Fatalf("len(ranks) = %d, want >= %d", got, tc.minSize)
+			}
+		})
+	}
+}
+
 func TestResolveEncodingName(t *testing.T) {
 	cases := []struct {
 		model    string
@@ -13,6 +36,7 @@ func TestResolveEncodingName(t *testing.T) {
 	}{
 		{"gpt-4o", "o200k_base"},
 		{"gpt-4.1", "o200k_base"},
+		{"gpt-4.5-preview", "o200k_base"},
 		{"gpt-5", "o200k_base"},
 		{"o3-mini", "o200k_base"},
 		{"deepseek-v4-pro", "o200k_base"},
@@ -41,8 +65,8 @@ func TestCountTokensSimple(t *testing.T) {
 			{Role: "user", Content: "hello world"},
 		},
 	})
-	if n <= 0 {
-		t.Fatalf("CountTokens = %d, want > 0", n)
+	if n != 7 {
+		t.Fatalf("CountTokens = %d, want 7", n)
 	}
 }
 
@@ -54,8 +78,8 @@ func TestCountTokensWithSystem(t *testing.T) {
 			{Role: "user", Content: "hello"},
 		},
 	})
-	if n <= 0 {
-		t.Fatalf("CountTokens = %d, want > 0", n)
+	if n != 12 {
+		t.Fatalf("CountTokens = %d, want 12", n)
 	}
 }
 
@@ -79,8 +103,8 @@ func TestCountTokensWithTools(t *testing.T) {
 			},
 		},
 	})
-	if n <= 0 {
-		t.Fatalf("CountTokens = %d, want > 0", n)
+	if n != 37 {
+		t.Fatalf("CountTokens = %d, want 37", n)
 	}
 }
 
@@ -100,9 +124,8 @@ func TestCountTokensEmptyMessageContent(t *testing.T) {
 		Model:    "gpt-4o",
 		Messages: []types.Message{{Role: "user", Content: ""}},
 	})
-	// "user" 编码 + 4 开销，应 > 0
-	if n <= 2 {
-		t.Fatalf("CountTokens = %d, want > 2 (role + overhead)", n)
+	if n != 5 {
+		t.Fatalf("CountTokens = %d, want 5", n)
 	}
 }
 
@@ -119,8 +142,8 @@ func TestCountTokensContentBlocks(t *testing.T) {
 			},
 		},
 	})
-	if n <= 0 {
-		t.Fatalf("CountTokens = %d, want > 0", n)
+	if n != 7 {
+		t.Fatalf("CountTokens = %d, want 7", n)
 	}
 }
 
@@ -131,7 +154,7 @@ func TestCountTokensChineseText(t *testing.T) {
 			{Role: "user", Content: "你好，今天天气怎么样？"},
 		},
 	})
-	if n <= 0 {
-		t.Fatalf("CountTokens = %d, want > 0", n)
+	if n != 12 {
+		t.Fatalf("CountTokens = %d, want 12", n)
 	}
 }

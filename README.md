@@ -19,7 +19,13 @@ Claude Code                    Gateway                       OpenAI API
    │                             │  │  ◄─── SSE/JSON 响应 ──────│
    │                             │  │  转换响应为 Anthropic 格式  │
    │  ◄─── Anthropic 格式响应 ───│  │                            │
-   │                             │  └─ 否 → 直接透传（未实现）    │
+   │                             │  └─ 否 → 透传到 Anthropic API │
+   │                             │     POST /messages            │
+   │                             │     (原样转发)                 │
+   │                             │  ┌───────────────────────────►│
+   │                             │  │        Anthropic API       │
+   │                             │  ◄────────────────────────────│
+   │  ◄─── Anthropic 格式响应 ───│     (原样返回)                 │
 ```
 
 ## 快速开始
@@ -28,6 +34,7 @@ Claude Code                    Gateway                       OpenAI API
 
 - Go 1.23+
 - OpenAI API Key
+- Anthropic API Key（仅透传模型需要）
 
 ### 启动
 
@@ -68,11 +75,15 @@ claude
 | `OPENAI_BASE_URL` | OpenAI API 地址 | `https://api.openai.com/v1` |
 | `OPENAI_API_KEY` | API 密钥 | — |
 | `OPENAI_TIMEOUT_MS` | 请求超时（毫秒） | `120000` |
+| `ANTHROPIC_BASE_URL` | Anthropic API 地址（透传用） | `https://api.anthropic.com/v1` |
+| `ANTHROPIC_API_KEY` | Anthropic API 密钥（透传用） | — |
+| `ANTHROPIC_TIMEOUT_MS` | 透传请求超时（毫秒） | `120000` |
 | `MODELS_NEED_TRANSFORMATION` | 需转换模型列表（逗号分隔） | `gpt-4.1,gpt-4o,gpt-4o-mini,gpt-4.1-mini,gpt-4.1-nano,gpt-5,o3,o3-mini,o4-mini` |
 | `LOG_PROMPT_PREVIEW_ON_ERROR` | 出错时记录 prompt 预览 | `false` |
 | `PROMPT_PREVIEW_MAX_CHARS` | prompt 预览最大字符数 | `240` |
 
 > `MODELS_NEED_TRANSFORMATION` 使用逗号分隔，解析时会自动去掉首尾空白。
+> 未命中 `MODELS_NEED_TRANSFORMATION` 的模型会透传到 Anthropic API，因此透传场景需要配置 `ANTHROPIC_API_KEY`。
 
 ## 格式转换映射
 
@@ -126,6 +137,7 @@ curl http://127.0.0.1:3456/health
 ├── .env.example                     # 环境变量模板
 ├── internal/
 │   ├── client/openai.go             # OpenAI HTTP 客户端
+│   ├── client/anthropic.go          # Anthropic HTTP 客户端（透传）
 │   ├── config/config.go             # 配置加载（默认值 + 环境变量）
 │   ├── handler/messages.go          # /v1/messages HTTP 处理器
 │   └── transformer/
@@ -139,7 +151,6 @@ curl http://127.0.0.1:3456/health
 
 ## 已知限制
 
-- **透传模式未实现**：不在 `models_need_transformation` 列表中的模型返回 501
-- **o-series 模型**：自动使用 `developer` role 替代 `system`，但部分 o 系列模型可能仍有差异
+- **o-series 和 gpt-5 系列模型**：自动使用 `developer` role 替代 `system`，但部分模型可能仍有差异
 - **thinking/推理**：Anthropic 的 extended thinking 功能未做特殊处理
 - **缓存控制**：Anthropic 的 `cache_control` 会被忽略

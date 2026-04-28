@@ -21,7 +21,7 @@ This Go gateway converts Anthropic Messages API requests into OpenAI Chat Comple
 - `go build -o gateway cmd/gateway/main.go`: build the local binary.
 - `gofmt -w <files>`: format edited Go files before submitting.
 
-Use `LISTEN_HOST`, `LISTEN_PORT`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_TIMEOUT_MS`, `MODELS_NEED_TRANSFORMATION`, `LOG_PROMPT_PREVIEW_ON_ERROR`, and `PROMPT_PREVIEW_MAX_CHARS` to configure runtime behavior.
+Use `LISTEN_HOST`, `LISTEN_PORT`, `OPENAI_BASE_URL`, `OPENAI_API_KEY`, `OPENAI_TIMEOUT_MS`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_API_KEY`, and `ANTHROPIC_TIMEOUT_MS` (for pass-through models), plus `MODELS_NEED_TRANSFORMATION`, `LOG_PROMPT_PREVIEW_ON_ERROR`, and `PROMPT_PREVIEW_MAX_CHARS` to configure runtime behavior.
 
 ## Coding Style & Naming Conventions
 

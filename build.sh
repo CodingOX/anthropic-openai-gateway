@@ -31,19 +31,24 @@ build_binary() {
         return
     fi
     
-    local output="${BUILD_DIR}/${BINARY_NAME}-${os}-${arch}"
+    local package_dir="${BUILD_DIR}/${BINARY_NAME}-${os}-${arch}"
+    local output="${package_dir}/${BINARY_NAME}"
     
     echo "🔨 构建 ${os}/${arch}..."
+    mkdir -p "${package_dir}"
     env CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" go build \
         -o "${output}" \
         -ldflags="-X 'main.version=${VERSION}' -X 'main.buildTime=${BUILD_TIME}'" \
         "${SCRIPT_DIR}/cmd/gateway/main.go"
+
+    cp "${SCRIPT_DIR}/.env.example" "${package_dir}/.env.example"
+    cp "${SCRIPT_DIR}/gateway.service" "${package_dir}/gateway.service"
     
     # 压缩
-    tar -czf "${output}.tar.gz" -C "${BUILD_DIR}" "$(basename ${output})"
-    rm "${output}"
+    tar -czf "${package_dir}.tar.gz" -C "${BUILD_DIR}" "$(basename "${package_dir}")"
+    rm -rf "${package_dir}"
     
-    echo "✅ 完成: ${output}.tar.gz"
+    echo "✅ 完成: ${package_dir}.tar.gz"
 }
 
 # 执行构建

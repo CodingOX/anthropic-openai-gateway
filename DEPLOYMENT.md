@@ -22,6 +22,8 @@ dist/
 └── gateway-linux-arm64.tar.gz
 ```
 
+每个压缩包内包含：`gateway`、`.env.example`、`gateway.service`。
+
 ### 2️⃣ 在服务器上部署
 
 #### 步骤 A：上传文件到服务器
@@ -44,42 +46,38 @@ sudo mkdir -p /var/log/gateway
 # 2. 解压二进制文件
 cd /tmp
 tar -xzf gateway-linux-amd64.tar.gz
-sudo mv gateway-linux-amd64 /opt/gateway/gateway
+sudo mv gateway-linux-amd64/gateway /opt/gateway/gateway
 sudo chmod +x /opt/gateway/gateway
 
-# 3. 配置文件
-# 复制配置模板（需先从本地拿到 config.example.json）
-sudo cp config.json /etc/gateway/config.json
+# 3. 环境变量文件
+sudo cp gateway-linux-amd64/.env.example /etc/gateway/gateway.env
 sudo chown -R gateway:gateway /etc/gateway /opt/gateway /var/log/gateway
-sudo chmod 600 /etc/gateway/config.json
+sudo chmod 600 /etc/gateway/gateway.env
 ```
 
-### 3️⃣ 编辑配置文件
+### 3️⃣ 编辑环境变量文件
 
 ```bash
-# 编辑 /etc/gateway/config.json
-sudo vim /etc/gateway/config.json
+# 编辑 /etc/gateway/gateway.env
+sudo vim /etc/gateway/gateway.env
 ```
 
 关键配置项：
-```json
-{
-  "listen_host": "0.0.0.0",      // 监听地址
-  "listen_port": 3456,            // 监听端口
-  "openai": {
-    "base_url": "https://api.openai.com/v1",
-    "api_key": "sk-xxxxx",        // 你的 OpenAI API Key
-    "timeout_ms": 120000
-  },
-  "models_need_transformation": [
-    "gpt-4o", "gpt-4-turbo", "o1", "o1-mini"
-  ]
-}
+```bash
+LISTEN_HOST=0.0.0.0
+LISTEN_PORT=3456
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_KEY=sk-xxxxx
+OPENAI_TIMEOUT_MS=120000
+ANTHROPIC_BASE_URL=https://api.anthropic.com/v1
+ANTHROPIC_API_KEY=sk-ant-xxxxx
+ANTHROPIC_TIMEOUT_MS=120000
+MODELS_NEED_TRANSFORMATION=gpt-4.1,gpt-4o,gpt-4o-mini,gpt-4.1-mini,gpt-4.1-nano,gpt-5,o3,o3-mini,o4-mini
 ```
 
 **⚠️ 安全提示**：
-- 不要在配置文件中硬编码 API Key，改用环境变量
-- 配置文件权限应为 600（只有 gateway 用户可读）
+- 把敏感配置只放在 `/etc/gateway/gateway.env`
+- 环境变量文件权限应为 600（只有 gateway 用户可读）
 
 ### 4️⃣ 使用 systemd 管理服务
 
@@ -87,7 +85,7 @@ sudo vim /etc/gateway/config.json
 
 ```bash
 # 复制服务文件
-sudo cp gateway.service /etc/systemd/system/
+sudo cp /tmp/gateway-linux-amd64/gateway.service /etc/systemd/system/
 
 # 重新加载 systemd 配置
 sudo systemctl daemon-reload
@@ -129,18 +127,20 @@ curl http://localhost:3456/health
 
 ## 进阶配置
 
-### 环境变量覆盖
+### 环境变量文件
 
-服务启动时可使用环境变量覆盖配置文件：
+服务启动时推荐通过 `/etc/gateway/gateway.env` 统一提供配置；`gateway.service` 已通过 `EnvironmentFile` 自动加载：
 
-编辑 `/etc/systemd/system/gateway.service`，添加到 `[Service]` 段：
-
-```ini
-Environment="OPENAI_API_KEY=sk-xxxxx"
-Environment="OPENAI_BASE_URL=https://api.openai.com/v1"
-Environment="LISTEN_HOST=0.0.0.0"
-Environment="LISTEN_PORT=8080"
-Environment="OPENAI_TIMEOUT_MS=180000"
+```bash
+OPENAI_API_KEY=sk-xxxxx
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_TIMEOUT_MS=180000
+ANTHROPIC_API_KEY=sk-ant-xxxxx
+ANTHROPIC_BASE_URL=https://api.anthropic.com/v1
+ANTHROPIC_TIMEOUT_MS=180000
+LISTEN_HOST=0.0.0.0
+LISTEN_PORT=8080
+MODELS_NEED_TRANSFORMATION=gpt-4.1,gpt-4o,gpt-4o-mini,gpt-4.1-mini,gpt-4.1-nano,gpt-5,o3,o3-mini,o4-mini
 ```
 
 然后重新加载：
@@ -221,8 +221,8 @@ sudo journalctl -u gateway -p err
 
 **Q1：服务无法启动**
 ```bash
-# 检查配置文件语法
-cat /etc/gateway/config.json | jq .
+# 检查 systemd 实际加载的环境变量
+sudo systemctl show gateway --property=Environment
 
 # 检查权限
 sudo -u gateway /opt/gateway/gateway  # 手动运行测试
@@ -234,14 +234,14 @@ sudo -u gateway /opt/gateway/gateway  # 手动运行测试
 sudo lsof -i :3456
 
 # 修改监听端口
-sudo vim /etc/gateway/config.json
+sudo vim /etc/gateway/gateway.env
 sudo systemctl restart gateway
 ```
 
 **Q3：OpenAI API 超时**
 ```bash
 # 增加超时时间
-# 编辑 /etc/gateway/config.json，修改 timeout_ms 字段
+# 编辑 /etc/gateway/gateway.env，修改 OPENAI_TIMEOUT_MS 字段
 ```
 
 ---
@@ -290,7 +290,7 @@ ssh deploy@192.168.1.100
 cd /tmp
 tar -xzf gateway-linux-amd64.tar.gz
 sudo systemctl stop gateway
-sudo mv gateway-linux-amd64 /opt/gateway/gateway
+sudo mv gateway-linux-amd64/gateway /opt/gateway/gateway
 sudo chmod +x /opt/gateway/gateway
 sudo systemctl start gateway
 
@@ -441,30 +441,6 @@ docker logs -f gateway
 docker stop gateway
 docker rm gateway
 ```
-
-### 方案 3：使用挂载配置文件
-
-如果想用配置文件而非环境变量：
-
-#### 修改 `docker-compose.yml`
-
-```yaml
-services:
-  gateway:
-    # ... 其他配置 ...
-    volumes:
-      - ./configs/config.json:/etc/gateway/config.json:ro
-    environment:
-      CONFIG_FILE: /etc/gateway/config.json
-```
-
-#### 然后启动
-
-```bash
-docker-compose up -d
-```
-
----
 
 ## 反向代理配置（Nginx + Docker）
 

@@ -30,8 +30,8 @@ WORKDIR /app
 # 从编译阶段复制二进制文件
 COPY --from=builder /build/gateway /app/gateway
 
-# 复制配置示例（可选）
-COPY --chown=gateway:gateway configs/config.example.json /app/config.example.json
+# 复制环境变量示例（可选）
+COPY --chown=gateway:gateway .env.example /app/.env.example
 
 # 修改权限
 RUN chmod +x /app/gateway && chown -R gateway:gateway /app
@@ -47,5 +47,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
 EXPOSE 3456
 
 # 启动网关
-# 注意：配置文件路径应通过环境变量或卷挂载指定
+# 注意：运行时配置仅通过环境变量提供
 ENTRYPOINT ["/app/gateway"]

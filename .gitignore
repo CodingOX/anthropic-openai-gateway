@@ -1,8 +1,10 @@
 .ace-tool/
+.DS_Store
 gateway
 configs/config.json
 oc-go-cc/
 .dist/
+dist/
 .idea/
 .env
 cmd/debugprobe

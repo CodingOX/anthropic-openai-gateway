@@ -98,11 +98,19 @@ type ChatChoice struct {
 
 // ChatUsage token 使用统计。
 type ChatUsage struct {
-	PromptTokens          int `json:"prompt_tokens"`
-	CompletionTokens      int `json:"completion_tokens"`
-	TotalTokens           int `json:"total_tokens"`
-	PromptCacheHitTokens  int `json:"prompt_cache_hit_tokens,omitempty"`
-	PromptCacheMissTokens int `json:"prompt_cache_miss_tokens,omitempty"`
+	PromptTokens             int                 `json:"prompt_tokens"`
+	CompletionTokens         int                 `json:"completion_tokens"`
+	TotalTokens              int                 `json:"total_tokens"`
+	PromptCacheHitTokens     int                 `json:"prompt_cache_hit_tokens,omitempty"`
+	PromptCacheMissTokens    int                 `json:"prompt_cache_miss_tokens,omitempty"`
+	CacheReadInputTokens     int                 `json:"cache_read_input_tokens,omitempty"`
+	CacheCreationInputTokens int                 `json:"cache_creation_input_tokens,omitempty"`
+	CachedTokens             int                 `json:"cached_tokens,omitempty"`
+	PromptTokensDetails      *PromptTokensDetail `json:"prompt_tokens_details,omitempty"`
+}
+
+type PromptTokensDetail struct {
+	CachedTokens int `json:"cached_tokens,omitempty"`
 }
 
 // ChatCompletionChunk 流式响应的 chunk。
@@ -126,8 +134,8 @@ type ChunkChoice struct {
 
 // ChatDelta 增量消息。
 type ChatDelta struct {
-	Role             string     `json:"role,omitempty"`
-	Content          string     `json:"content,omitempty"`
-	ReasoningContent *string    `json:"reasoning_content,omitempty"`
-	ToolCalls        []ToolCall `json:"tool_calls,omitempty"`
+	Role             string      `json:"role,omitempty"`
+	Content          interface{} `json:"content,omitempty"`
+	ReasoningContent *string     `json:"reasoning_content,omitempty"`
+	ToolCalls        []ToolCall  `json:"tool_calls,omitempty"`
 }

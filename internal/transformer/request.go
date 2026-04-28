@@ -54,6 +54,10 @@ func (t *RequestTransformer) TransformRequest(ar *types.MessageRequest) (*types.
 		log.Printf("[TRANSFORMER] 🔧 工具转换完成: %d个工具, tool_choice=%v", len(req.Tools), ar.ToolChoice)
 	}
 
+	if isThinkingEnabled(ar.Thinking) {
+		applyReasoningPlaceholder(req.Messages)
+	}
+
 	// 注入 system prompt 作为第一条 developer 消息。
 	// OpenAI o-series 和 gpt-5 系列模型推荐使用 developer role，其余使用 system role。
 	if systemMsg != "" {
@@ -411,5 +415,25 @@ func extractToolResultText(content interface{}) string {
 			return fmt.Sprintf("%v", v)
 		}
 		return string(b)
+	}
+}
+
+func isThinkingEnabled(thinking interface{}) bool {
+	config, ok := thinking.(map[string]interface{})
+	if !ok {
+		return false
+	}
+	thinkingType, _ := config["type"].(string)
+	return thinkingType == "enabled" || thinkingType == "adaptive"
+}
+
+func applyReasoningPlaceholder(messages []types.ChatMessage) {
+	for index := range messages {
+		message := &messages[index]
+		if message.Role != "assistant" || message.ReasoningContent != nil {
+			continue
+		}
+		placeholder := " "
+		message.ReasoningContent = &placeholder
 	}
 }

@@ -101,6 +101,45 @@ func TestTransformRequestPreservesThinkingAsReasoningContent(t *testing.T) {
 	}
 }
 
+func TestTransformRequestAddsReasoningPlaceholderWhenTopLevelThinkingEnabled(t *testing.T) {
+	req := &types.MessageRequest{
+		Model:     "gpt-4o",
+		MaxTokens: 128,
+		Thinking: map[string]interface{}{
+			"type": "enabled",
+		},
+		Messages: []types.Message{
+			{
+				Role:    "assistant",
+				Content: "answer without explicit thinking block",
+			},
+		},
+	}
+
+	openaiReq, err := NewRequestTransformer().TransformRequest(req)
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+
+	msg := openaiReq.Messages[0]
+	if msg.ReasoningContent == nil {
+		t.Fatal("ReasoningContent = nil, want placeholder when top-level thinking is enabled")
+	}
+	if got, want := *msg.ReasoningContent, " "; got != want {
+		t.Fatalf("ReasoningContent = %q, want %q", got, want)
+	}
+	if got, want := msg.Content, "answer without explicit thinking block"; got != want {
+		t.Fatalf("Content = %#v, want %q", got, want)
+	}
+	body, err := json.Marshal(openaiReq)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if !containsJSONField(body, "reasoning_content") {
+		t.Fatalf("serialized request missing reasoning_content placeholder: %s", body)
+	}
+}
+
 func containsJSONField(body []byte, field string) bool {
 	var payload map[string]interface{}
 	if err := json.Unmarshal(body, &payload); err != nil {

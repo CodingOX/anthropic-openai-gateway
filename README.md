@@ -183,4 +183,4 @@ curl http://127.0.0.1:3456/health
 - **Anthropic extended thinking**：基本 thinking 文本已支持转换，但 `signature`、`redacted_thinking` 等扩展字段会被忽略
 - **缓存控制**：Anthropic 的 `cache_control` 块会被忽略
 - **top_k**：Anthropic 的 `top_k` 参数目前未映射到 OpenAI 格式
-- **count_tokens**：当前为本地字符估算，非调用上游 API 的真实计数
+- **count_tokens**：使用 tiktoken 精确计数，转换路径模型结果与上游一致；透传模型使用 cl100k_base 近似。tiktoken 不可用时自动降级为字符估算

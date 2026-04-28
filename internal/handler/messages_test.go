@@ -45,9 +45,12 @@ func TestHandleCountTokensReturnsAnthropicShape(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("json.Unmarshal() error = %v; body=%s", err, rec.Body.String())
 	}
-	if payload["input_tokens"] <= 0 {
-		t.Fatalf("input_tokens = %d, want positive", payload["input_tokens"])
+	// "hello world" = 2 tokens in o200k_base, + role + overhead
+	// 精确值不重要，但必须 > 字符估算的差异阈值
+	if payload["input_tokens"] < 2 {
+		t.Fatalf("input_tokens = %d, want >= 2", payload["input_tokens"])
 	}
+	t.Logf("input_tokens = %d", payload["input_tokens"])
 }
 
 func TestHandleMessagesLogsDecodeFailuresWithRequestContext(t *testing.T) {

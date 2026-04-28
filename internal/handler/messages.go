@@ -18,6 +18,7 @@ import (
 
 	"anthropic-openai-gateway/internal/client"
 	"anthropic-openai-gateway/internal/config"
+	"anthropic-openai-gateway/internal/tokenizer"
 	"anthropic-openai-gateway/internal/transformer"
 	"anthropic-openai-gateway/pkg/types"
 )
@@ -47,7 +48,7 @@ type requestLogContext struct {
 var requestIDSeq atomic.Uint64
 
 // HandleCountTokens 提供 Anthropic count_tokens 兼容接口。
-// 这里采用轻量估算，满足 Claude Code 对接口形状的依赖；真实计费仍以上游 usage 为准。
+// 使用 tiktoken 精确计数；tiktoken 不可用时回退到字符估算。
 func (h *MessagesHandler) HandleCountTokens(w http.ResponseWriter, r *http.Request) {
 	requestLog := newRequestLogContext(r)
 	w.Header().Set("X-Request-Id", requestLog.RequestID)
@@ -72,7 +73,14 @@ func (h *MessagesHandler) HandleCountTokens(w http.ResponseWriter, r *http.Reque
 	updateRequestLogState(r.Context(), requestLog)
 	h.logInfo(requestLog, "count_tokens_requested")
 
-	inputTokens := estimateInputTokens(anthropicReq)
+	// 使用 tiktoken 精确计数；失败时回退到字符估算
+	inputTokens := tokenizer.CountTokens(&anthropicReq)
+	if inputTokens < 0 {
+		h.logError(requestLog, "count_tokens_fallback",
+			fmt.Sprintf("error=%q", "tiktoken unavailable, using char estimate"))
+		inputTokens = estimateInputTokens(anthropicReq)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]int{

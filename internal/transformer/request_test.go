@@ -101,6 +101,110 @@ func TestTransformRequestPreservesThinkingAsReasoningContent(t *testing.T) {
 	}
 }
 
+func TestTransformRequestKeepsAssistantMessageWithOnlyThinking(t *testing.T) {
+	req := &types.MessageRequest{
+		Model:     "gpt-4o",
+		MaxTokens: 128,
+		Messages: []types.Message{
+			{
+				Role: "assistant",
+				Content: []interface{}{
+					map[string]interface{}{"type": "thinking", "thinking": "intermediate reasoning"},
+				},
+			},
+		},
+	}
+
+	openaiReq, err := NewRequestTransformer().TransformRequest(req)
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+
+	if got, want := len(openaiReq.Messages), 1; got != want {
+		t.Fatalf("len(Messages) = %d, want %d: %#v", got, want, openaiReq.Messages)
+	}
+	msg := openaiReq.Messages[0]
+	if got, want := msg.Role, "assistant"; got != want {
+		t.Fatalf("Role = %q, want %q", got, want)
+	}
+	if msg.ReasoningContent == nil {
+		t.Fatal("ReasoningContent = nil, want preserved thinking-only assistant message")
+	}
+	if got, want := *msg.ReasoningContent, "intermediate reasoning"; got != want {
+		t.Fatalf("ReasoningContent = %q, want %q", got, want)
+	}
+}
+
+func TestTransformRequestKeepsAssistantMessageWithOmittedThinking(t *testing.T) {
+	req := &types.MessageRequest{
+		Model:     "gpt-4o",
+		MaxTokens: 128,
+		Messages: []types.Message{
+			{
+				Role: "assistant",
+				Content: []interface{}{
+					map[string]interface{}{"type": "thinking", "thinking": "", "signature": "sig_123"},
+					map[string]interface{}{"type": "text", "text": "tool follow-up"},
+				},
+			},
+		},
+	}
+
+	openaiReq, err := NewRequestTransformer().TransformRequest(req)
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+
+	if got, want := len(openaiReq.Messages), 1; got != want {
+		t.Fatalf("len(Messages) = %d, want %d: %#v", got, want, openaiReq.Messages)
+	}
+	msg := openaiReq.Messages[0]
+	if msg.ReasoningContent == nil {
+		t.Fatal("ReasoningContent = nil, want placeholder for omitted thinking block")
+	}
+	if got, want := *msg.ReasoningContent, " "; got != want {
+		t.Fatalf("ReasoningContent = %q, want %q", got, want)
+	}
+	if got, want := msg.Content, "tool follow-up"; got != want {
+		t.Fatalf("Content = %#v, want %q", got, want)
+	}
+}
+
+func TestTransformRequestKeepsAssistantMessageWithRedactedThinking(t *testing.T) {
+	req := &types.MessageRequest{
+		Model:     "gpt-4o",
+		MaxTokens: 128,
+		Messages: []types.Message{
+			{
+				Role: "assistant",
+				Content: []interface{}{
+					map[string]interface{}{"type": "redacted_thinking", "data": "opaque"},
+					map[string]interface{}{"type": "tool_use", "id": "call_1", "name": "lookup", "input": map[string]interface{}{"q": "x"}},
+				},
+			},
+		},
+	}
+
+	openaiReq, err := NewRequestTransformer().TransformRequest(req)
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+
+	if got, want := len(openaiReq.Messages), 1; got != want {
+		t.Fatalf("len(Messages) = %d, want %d: %#v", got, want, openaiReq.Messages)
+	}
+	msg := openaiReq.Messages[0]
+	if msg.ReasoningContent == nil {
+		t.Fatal("ReasoningContent = nil, want placeholder for redacted thinking block")
+	}
+	if got, want := *msg.ReasoningContent, " "; got != want {
+		t.Fatalf("ReasoningContent = %q, want %q", got, want)
+	}
+	if got := len(msg.ToolCalls); got != 1 {
+		t.Fatalf("len(ToolCalls) = %d, want 1", got)
+	}
+}
+
 func TestTransformRequestAddsReasoningPlaceholderWhenTopLevelThinkingEnabled(t *testing.T) {
 	req := &types.MessageRequest{
 		Model:     "gpt-4o",

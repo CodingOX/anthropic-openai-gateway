@@ -130,6 +130,7 @@ func (t *RequestTransformer) convertMessageToMessages(msg types.Message) ([]type
 func (t *RequestTransformer) convertContentBlocks(role string, blocks []interface{}) ([]types.ChatMessage, error) {
 	var textParts []string
 	var thinkingParts []string
+	hasThinkingMarker := false
 	var toolCalls []types.ToolCall
 	var contentParts []types.ChatContentPart
 
@@ -156,10 +157,13 @@ func (t *RequestTransformer) convertContentBlocks(role string, blocks []interfac
 			}
 			toolCalls = append(toolCalls, *tc)
 		case "thinking":
+			hasThinkingMarker = true
 			thinking, _ := blockMap["thinking"].(string)
 			if thinking != "" {
 				thinkingParts = append(thinkingParts, thinking)
 			}
+		case "redacted_thinking":
+			hasThinkingMarker = true
 		case "image":
 			if source, ok := blockMap["source"].(map[string]interface{}); ok {
 				mediaType, _ := source["media_type"].(string)
@@ -191,8 +195,11 @@ func (t *RequestTransformer) convertContentBlocks(role string, blocks []interfac
 			cm.Content = contentParts
 		}
 	}
-	if len(thinkingParts) > 0 {
+	if len(thinkingParts) > 0 || hasThinkingMarker {
 		reasoningContent := strings.Join(thinkingParts, "")
+		if reasoningContent == "" {
+			reasoningContent = " "
+		}
 		cm.ReasoningContent = &reasoningContent
 	}
 
@@ -380,8 +387,8 @@ func filterEmptyMessages(msgs []types.ChatMessage) []types.ChatMessage {
 		if m.Role == "" {
 			continue
 		}
-		// 跳过空消息（除非有 tool_calls）
-		if m.Content == nil && len(m.ToolCalls) == 0 {
+		// thinking-only assistant 历史消息在重试时也必须保留，否则上游会丢失必要的 reasoning_content。
+		if m.Content == nil && len(m.ToolCalls) == 0 && m.ReasoningContent == nil {
 			continue
 		}
 		result = append(result, m)

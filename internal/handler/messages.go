@@ -214,7 +214,11 @@ func (h *MessagesHandler) handleStreaming(w http.ResponseWriter, r *http.Request
 
 	// 代理并转换流
 	h.logInfo(requestLog, "stream_started")
-	if err := h.streamHandler.ProxyStream(w, streamBody, anthropicReq.Model, ctx, flusher); err != nil {
+	inputTokens := tokenizer.CountTokens(anthropicReq)
+	if inputTokens < 0 {
+		inputTokens = estimateInputTokens(*anthropicReq)
+	}
+	if err := h.streamHandler.ProxyStream(w, streamBody, anthropicReq.Model, inputTokens, ctx, flusher); err != nil {
 		h.logError(requestLog, "stream_proxy",
 			fmt.Sprintf("duration_ms=%d", time.Since(startedAt).Milliseconds()),
 			fmt.Sprintf("error=%q", err.Error()))

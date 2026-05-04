@@ -46,6 +46,9 @@ func TestTransformResponsePreservesReasoningAndCacheUsage(t *testing.T) {
 	if got.Usage.CacheCreationInputTokens != 3 {
 		t.Fatalf("CacheCreationInputTokens = %d, want 3", got.Usage.CacheCreationInputTokens)
 	}
+	if got.Usage.InputTokens != 0 {
+		t.Fatalf("InputTokens = %d, want 0 after cache tokens are split out", got.Usage.InputTokens)
+	}
 }
 
 func TestTransformResponseNormalizesCacheUsageFallbacks(t *testing.T) {
@@ -74,5 +77,36 @@ func TestTransformResponseNormalizesCacheUsageFallbacks(t *testing.T) {
 	}
 	if got.Usage.CacheCreationInputTokens != 2 {
 		t.Fatalf("CacheCreationInputTokens = %d, want 2", got.Usage.CacheCreationInputTokens)
+	}
+	if got.Usage.InputTokens != 1 {
+		t.Fatalf("InputTokens = %d, want 1 after cache tokens are split out", got.Usage.InputTokens)
+	}
+}
+
+func TestTransformResponseKeepsPromptTokensWhenNoCacheUsage(t *testing.T) {
+	resp := &types.ChatCompletionResponse{
+		ID: "chatcmpl_3",
+		Choices: []types.ChatChoice{
+			{
+				Message:      types.ChatMessage{Content: "final"},
+				FinishReason: "stop",
+			},
+		},
+		Usage: &types.ChatUsage{
+			PromptTokens:     12,
+			CompletionTokens: 4,
+		},
+	}
+
+	got, err := NewResponseTransformer().TransformResponse(resp, "gpt-4o")
+	if err != nil {
+		t.Fatalf("TransformResponse() error = %v", err)
+	}
+
+	if got.Usage.InputTokens != 12 {
+		t.Fatalf("InputTokens = %d, want 12", got.Usage.InputTokens)
+	}
+	if got.Usage.OutputTokens != 4 {
+		t.Fatalf("OutputTokens = %d, want 4", got.Usage.OutputTokens)
 	}
 }

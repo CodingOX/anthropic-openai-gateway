@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -19,7 +20,7 @@ func TestProxyStreamEmitsCompleteTextEventSequence(t *testing.T) {
 		`[DONE]`,
 	)
 
-	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", context.Background()); err != nil {
+	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", 0, context.Background(), nil); err != nil {
 		t.Fatalf("ProxyStream() error = %v", err)
 	}
 
@@ -54,7 +55,7 @@ func TestProxyStreamEmitsThinkingThenText(t *testing.T) {
 		`[DONE]`,
 	)
 
-	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", context.Background()); err != nil {
+	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", 0, context.Background(), nil); err != nil {
 		t.Fatalf("ProxyStream() error = %v", err)
 	}
 
@@ -94,7 +95,7 @@ func TestProxyStreamEmitsTextFromStructuredContentDelta(t *testing.T) {
 		`[DONE]`,
 	)
 
-	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", context.Background()); err != nil {
+	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", 0, context.Background(), nil); err != nil {
 		t.Fatalf("ProxyStream() error = %v", err)
 	}
 
@@ -107,7 +108,7 @@ func TestProxyStreamEmitsTextFromStructuredContentDelta(t *testing.T) {
 	}
 }
 
-func TestProxyStreamEmitsCacheUsageInMessageDelta(t *testing.T) {
+func TestProxyStreamSplitsUsageBetweenMessageStartAndDelta(t *testing.T) {
 	var out bytes.Buffer
 	body := sseBody(
 		`{"id":"chunk_1","choices":[{"index":0,"delta":{"content":"hello"},"finish_reason":null}]}`,
@@ -115,13 +116,34 @@ func TestProxyStreamEmitsCacheUsageInMessageDelta(t *testing.T) {
 		`[DONE]`,
 	)
 
-	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", context.Background()); err != nil {
+	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", 11, context.Background(), nil); err != nil {
 		t.Fatalf("ProxyStream() error = %v", err)
 	}
 
 	events := parseEvents(t, out.String())
+	rawEvents := parseRawEvents(t, out.String())
 	if len(events) < 2 {
 		t.Fatalf("event count = %d, want at least 2", len(events))
+	}
+
+	messageStart := events[0]
+	if messageStart.Type != "message_start" {
+		t.Fatalf("first event type = %q, want message_start", messageStart.Type)
+	}
+	if messageStart.Message == nil {
+		t.Fatal("message_start message = nil")
+	}
+	if messageStart.Message.Usage.InputTokens != 11 {
+		t.Fatalf("message_start input_tokens = %d, want 11", messageStart.Message.Usage.InputTokens)
+	}
+	if messageStart.Message.Usage.OutputTokens != 0 {
+		t.Fatalf("message_start output_tokens = %d, want 0", messageStart.Message.Usage.OutputTokens)
+	}
+	if messageStart.Message.Usage.CacheReadInputTokens != 0 {
+		t.Fatalf("message_start cache_read_input_tokens = %d, want 0", messageStart.Message.Usage.CacheReadInputTokens)
+	}
+	if messageStart.Message.Usage.CacheCreationInputTokens != 0 {
+		t.Fatalf("message_start cache_creation_input_tokens = %d, want 0", messageStart.Message.Usage.CacheCreationInputTokens)
 	}
 
 	messageDelta := events[len(events)-2]
@@ -131,17 +153,17 @@ func TestProxyStreamEmitsCacheUsageInMessageDelta(t *testing.T) {
 	if messageDelta.Usage == nil {
 		t.Fatalf("message_delta usage = nil")
 	}
-	if messageDelta.Usage.InputTokens != 11 {
-		t.Fatalf("InputTokens = %d, want 11", messageDelta.Usage.InputTokens)
+	if hasUsageField(rawEvents[len(rawEvents)-2], "input_tokens") {
+		t.Fatalf("message_delta usage must not include input_tokens: %s", rawEvents[len(rawEvents)-2])
 	}
 	if messageDelta.Usage.OutputTokens != 7 {
 		t.Fatalf("OutputTokens = %d, want 7", messageDelta.Usage.OutputTokens)
 	}
-	if messageDelta.Usage.CacheReadInputTokens != 5 {
-		t.Fatalf("CacheReadInputTokens = %d, want 5", messageDelta.Usage.CacheReadInputTokens)
+	if hasUsageField(rawEvents[len(rawEvents)-2], "cache_read_input_tokens") {
+		t.Fatalf("message_delta usage must not include cache_read_input_tokens: %s", rawEvents[len(rawEvents)-2])
 	}
-	if messageDelta.Usage.CacheCreationInputTokens != 6 {
-		t.Fatalf("CacheCreationInputTokens = %d, want 6", messageDelta.Usage.CacheCreationInputTokens)
+	if hasUsageField(rawEvents[len(rawEvents)-2], "cache_creation_input_tokens") {
+		t.Fatalf("message_delta usage must not include cache_creation_input_tokens: %s", rawEvents[len(rawEvents)-2])
 	}
 }
 
@@ -153,7 +175,7 @@ func TestProxyStreamNormalizesCacheUsageFallbacks(t *testing.T) {
 		`[DONE]`,
 	)
 
-	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", context.Background()); err != nil {
+	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", 0, context.Background(), nil); err != nil {
 		t.Fatalf("ProxyStream() error = %v", err)
 	}
 
@@ -162,11 +184,8 @@ func TestProxyStreamNormalizesCacheUsageFallbacks(t *testing.T) {
 	if messageDelta.Usage == nil {
 		t.Fatal("message_delta usage = nil")
 	}
-	if messageDelta.Usage.CacheReadInputTokens != 5 {
-		t.Fatalf("CacheReadInputTokens = %d, want 5", messageDelta.Usage.CacheReadInputTokens)
-	}
-	if messageDelta.Usage.CacheCreationInputTokens != 6 {
-		t.Fatalf("CacheCreationInputTokens = %d, want 6", messageDelta.Usage.CacheCreationInputTokens)
+	if messageDelta.Usage.OutputTokens != 7 {
+		t.Fatalf("OutputTokens = %d, want 7", messageDelta.Usage.OutputTokens)
 	}
 }
 
@@ -181,7 +200,7 @@ func TestProxyStreamStopsToolBlockWhenFinishReasonArrives(t *testing.T) {
 	)
 	_ = idx
 
-	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", context.Background()); err != nil {
+	if err := NewStreamHandler().ProxyStream(&out, body, "gpt-4o", 0, context.Background(), nil); err != nil {
 		t.Fatalf("ProxyStream() error = %v", err)
 	}
 
@@ -218,16 +237,38 @@ func sseBody(lines ...string) io.ReadCloser {
 func parseEvents(t *testing.T, raw string) []types.StreamEvent {
 	t.Helper()
 	var events []types.StreamEvent
+	for _, data := range parseRawEvents(t, raw) {
+		var event types.StreamEvent
+		if err := json.Unmarshal([]byte(data), &event); err != nil {
+			t.Fatalf("unmarshal event: %v; line=%s", err, data)
+		}
+		events = append(events, event)
+	}
+	return events
+}
+
+func parseRawEvents(t *testing.T, raw string) []string {
+	t.Helper()
+	var events []string
 	for _, line := range strings.Split(raw, "\n") {
 		line = strings.TrimSpace(line)
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
-		var event types.StreamEvent
-		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &event); err != nil {
-			t.Fatalf("unmarshal event: %v; line=%s", err, line)
-		}
-		events = append(events, event)
+		events = append(events, strings.TrimPrefix(line, "data: "))
 	}
 	return events
+}
+
+func hasUsageField(rawEvent, field string) bool {
+	var event map[string]interface{}
+	if err := json.Unmarshal([]byte(rawEvent), &event); err != nil {
+		panic(fmt.Sprintf("unmarshal event: %v", err))
+	}
+	usage, ok := event["usage"].(map[string]interface{})
+	if !ok {
+		return false
+	}
+	_, ok = usage[field]
+	return ok
 }

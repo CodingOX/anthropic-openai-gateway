@@ -162,9 +162,13 @@ func normalizeOpenAIUsage(usage *types.ChatUsage) types.Usage {
 		usage.PromptCacheMissTokens,
 		usage.CacheCreationInputTokens,
 	)
+	inputTokens := usage.PromptTokens - cacheReadTokens - cacheCreationTokens
+	if inputTokens < 0 {
+		inputTokens = 0
+	}
 
 	return types.Usage{
-		InputTokens:              usage.PromptTokens,
+		InputTokens:              inputTokens,
 		OutputTokens:             outputTokens,
 		CacheReadInputTokens:     cacheReadTokens,
 		CacheCreationInputTokens: cacheCreationTokens,

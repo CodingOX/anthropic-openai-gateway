@@ -24,7 +24,7 @@ func NewStreamHandler() *StreamHandler {
 }
 
 // ProxyStream 读取 OpenAI SSE 流，转换后写入 writer。
-func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model string, ctx context.Context, flusher ...http.Flusher) error {
+func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model string, inputTokens int, ctx context.Context, flusher http.Flusher) error {
 	log.Printf("[STREAM] 🎬 开始流式传输: model=%s", model)
 	startTime := time.Now()
 	eventCount := 0
@@ -41,16 +41,7 @@ func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model strin
 	stopReason := "end_turn"
 	finishSeen := false
 
-	h.writeEvent(w, types.StreamEvent{
-		Type: "message_start",
-		Message: &types.MessageResponse{
-			ID:      state.messageID,
-			Type:    "message",
-			Role:    "assistant",
-			Content: []types.ContentBlock{},
-			Model:   model,
-		},
-	}, flusher...)
+	h.writeMessageStart(w, state.messageID, model, inputTokens, flusher)
 	eventCount++
 
 	for scanner.Scan() {
@@ -72,11 +63,11 @@ func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model strin
 			log.Printf("[STREAM] 🏁 收到 [DONE] 信号")
 			if !finishSeen {
 				for _, event := range state.closeOpenBlock() {
-					h.writeEvent(w, event, flusher...)
+					h.writeEvent(w, event, flusher)
 					eventCount++
 				}
 			}
-			h.writeDone(w, messageID, model, &stopReason, accumulatedUsage, toolUseState, flusher...)
+			h.writeDone(w, messageID, model, &stopReason, accumulatedUsage, toolUseState, flusher)
 			eventCount += 2 // message_delta + message_stop
 			continue
 		}
@@ -99,7 +90,7 @@ func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model strin
 			if text := extractStreamText(delta.Content); text != "" {
 				events := state.textDelta(text)
 				for _, event := range events {
-					h.writeEvent(w, event, flusher...)
+					h.writeEvent(w, event, flusher)
 					eventCount++
 				}
 			}
@@ -107,7 +98,7 @@ func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model strin
 			if delta.ReasoningContent != nil && *delta.ReasoningContent != "" {
 				events := state.thinkingDelta(*delta.ReasoningContent)
 				for _, event := range events {
-					h.writeEvent(w, event, flusher...)
+					h.writeEvent(w, event, flusher)
 				}
 			}
 
@@ -116,7 +107,7 @@ func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model strin
 				for _, tc := range delta.ToolCalls {
 					events := state.toolDelta(tc, toolUseState)
 					for _, ev := range events {
-						h.writeEvent(w, ev, flusher...)
+						h.writeEvent(w, ev, flusher)
 					}
 				}
 			}
@@ -125,16 +116,16 @@ func (h *StreamHandler) ProxyStream(w io.Writer, body io.ReadCloser, model strin
 			if choice.FinishReason != nil && *choice.FinishReason != "" {
 				finishSeen = true
 				for _, event := range state.closeOpenBlock() {
-					h.writeEvent(w, event, flusher...)
+					h.writeEvent(w, event, flusher)
 				}
 				for _, event := range closeToolBlocks(toolUseState) {
-					h.writeEvent(w, event, flusher...)
+					h.writeEvent(w, event, flusher)
 				}
 				stopReason = h.convertStreamFinishReason(*choice.FinishReason)
 			}
 		}
 
-		// 收集 usage（通常只在最后一个 chunk 出现）
+		// 收集 usage（通常只在最后一个 chunk 出现）。
 		if chunk.Usage != nil {
 			normalized := normalizeOpenAIUsage(chunk.Usage)
 			accumulatedUsage = &normalized
@@ -156,23 +147,40 @@ type toolUseBuilder struct {
 }
 
 // writeEvent 写入 SSE 事件。
-func (h *StreamHandler) writeEvent(w io.Writer, event types.StreamEvent, flusher ...http.Flusher) {
+func (h *StreamHandler) writeEvent(w io.Writer, event types.StreamEvent, flusher http.Flusher) {
 	data, err := json.Marshal(event)
 	if err != nil {
 		log.Printf("Failed to marshal stream event: %v", err)
 		return
 	}
 	fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Type, string(data))
-	if len(flusher) > 0 && flusher[0] != nil {
-		flusher[0].Flush()
+	if flusher != nil {
+		flusher.Flush()
 	}
 }
 
+func (h *StreamHandler) writeMessageStart(w io.Writer, messageID, model string, inputTokens int, flusher http.Flusher) {
+	message := &types.MessageResponse{
+		ID:      messageID,
+		Type:    "message",
+		Role:    "assistant",
+		Content: []types.ContentBlock{},
+		Model:   model,
+		Usage: types.Usage{
+			InputTokens: inputTokens,
+		},
+	}
+	h.writeEvent(w, types.StreamEvent{
+		Type:    "message_start",
+		Message: message,
+	}, flusher)
+}
+
 // writeDone 发送流结束事件。
-func (h *StreamHandler) writeDone(w io.Writer, messageID, model string, stopReason *string, usage *types.Usage, state map[int]*toolUseBuilder, flusher ...http.Flusher) {
+func (h *StreamHandler) writeDone(w io.Writer, messageID, model string, stopReason *string, usage *types.Usage, state map[int]*toolUseBuilder, flusher http.Flusher) {
 	// 发送所有 content_block_stop
 	for _, event := range closeToolBlocks(state) {
-		h.writeEvent(w, event, flusher...)
+		h.writeEvent(w, event, flusher)
 	}
 
 	// 发送 message_delta（含 stop_reason 和 usage）
@@ -184,15 +192,17 @@ func (h *StreamHandler) writeDone(w io.Writer, messageID, model string, stopReas
 		Delta: delta,
 	}
 	if usage != nil {
-		messageDelta.Usage = usage
+		messageDelta.Usage = &types.StreamUsage{
+			OutputTokens: usage.OutputTokens,
+		}
 	}
-	h.writeEvent(w, messageDelta, flusher...)
+	h.writeEvent(w, messageDelta, flusher)
 
 	// 发送 message_stop
 	stopEvent := types.StreamEvent{
 		Type: "message_stop",
 	}
-	h.writeEvent(w, stopEvent, flusher...)
+	h.writeEvent(w, stopEvent, flusher)
 }
 
 type streamState struct {

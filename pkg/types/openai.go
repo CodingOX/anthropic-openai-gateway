@@ -12,9 +12,10 @@ type ChatMessage struct {
 
 // ChatContentPart 多模态内容部分（OpenAI 风格）。
 type ChatContentPart struct {
-	Type     string    `json:"type"`
-	Text     string    `json:"text,omitempty"`
-	ImageURL *ImageURL `json:"image_url,omitempty"`
+	Type         string        `json:"type"`
+	Text         string        `json:"text,omitempty"`
+	ImageURL     *ImageURL     `json:"image_url,omitempty"`
+	CacheControl *CacheControl `json:"cache_control,omitempty"`
 }
 
 // ImageURL 图片 URL。

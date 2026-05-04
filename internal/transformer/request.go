@@ -13,6 +13,8 @@ import (
 // RequestTransformer 将 Anthropic 请求转换为 OpenAI 请求。
 type RequestTransformer struct{}
 
+const reasoningReplayPlaceholder = "[reasoning content omitted]"
+
 // NewRequestTransformer 创建请求转换器。
 func NewRequestTransformer() *RequestTransformer {
 	return &RequestTransformer{}
@@ -24,7 +26,7 @@ func (t *RequestTransformer) TransformRequest(ar *types.MessageRequest) (*types.
 	log.Printf("[TRANSFORMER] 📝 模型: %s, 消息数: %d, 工具数: %d", ar.Model, len(ar.Messages), len(ar.Tools))
 
 	// 转换消息列表
-	messages, systemMsg, err := t.convertMessages(ar.Messages, ar.System)
+	messages, systemContent, err := t.convertMessages(ar.Messages, ar.System)
 	if err != nil {
 		log.Printf("[TRANSFORMER] ❌ 消息转换失败: %v", err)
 		return nil, fmt.Errorf("convert messages: %w", err)
@@ -54,20 +56,20 @@ func (t *RequestTransformer) TransformRequest(ar *types.MessageRequest) (*types.
 		log.Printf("[TRANSFORMER] 🔧 工具转换完成: %d个工具, tool_choice=%v", len(req.Tools), ar.ToolChoice)
 	}
 
-	if isThinkingEnabled(ar.Thinking) {
+	if isThinkingEnabled(ar.Thinking) || needsReasoningReplay(ar.Model) {
 		applyReasoningPlaceholder(req.Messages)
 	}
 
 	// 注入 system prompt 作为第一条 developer 消息。
 	// OpenAI o-series 和 gpt-5 系列模型推荐使用 developer role，其余使用 system role。
-	if systemMsg != "" {
+	if systemContent != nil {
 		systemRole := "system"
 		if strings.HasPrefix(ar.Model, "o") || strings.HasPrefix(ar.Model, "gpt-5") {
 			systemRole = "developer"
 		}
 		systemMessage := types.ChatMessage{
 			Role:    systemRole,
-			Content: systemMsg,
+			Content: systemContent,
 		}
 		req.Messages = append([]types.ChatMessage{systemMessage}, req.Messages...)
 	}
@@ -76,14 +78,16 @@ func (t *RequestTransformer) TransformRequest(ar *types.MessageRequest) (*types.
 }
 
 // convertMessages 转换消息列表，分离 system prompt。
-func (t *RequestTransformer) convertMessages(messages []types.Message, system interface{}) ([]types.ChatMessage, string, error) {
+func (t *RequestTransformer) convertMessages(messages []types.Message, system interface{}) ([]types.ChatMessage, interface{}, error) {
 	// 处理独立的 system 字段
-	var systemText string
+	var systemContent interface{}
 	switch s := system.(type) {
 	case string:
-		systemText = s
+		systemContent = s
 	case []interface{}:
-		// 从 ContentBlock 数组中提取文本
+		// 从 ContentBlock 数组中提取文本，并尽量保留缓存控制等结构化信息。
+		var systemText string
+		var systemParts []types.ChatContentPart
 		for _, block := range s {
 			blockMap, ok := block.(map[string]interface{})
 			if !ok {
@@ -92,8 +96,21 @@ func (t *RequestTransformer) convertMessages(messages []types.Message, system in
 			if blockMap["type"] == "text" {
 				if text, ok := blockMap["text"].(string); ok {
 					systemText += text
+					systemParts = append(systemParts, types.ChatContentPart{
+						Type:         "text",
+						Text:         text,
+						CacheControl: convertCacheControl(blockMap["cache_control"]),
+					})
 				}
 			}
+		}
+		switch {
+		case len(systemParts) == 0:
+			systemContent = nil
+		case len(systemParts) == 1 && systemParts[0].CacheControl == nil:
+			systemContent = systemText
+		default:
+			systemContent = systemParts
 		}
 	}
 
@@ -101,13 +118,13 @@ func (t *RequestTransformer) convertMessages(messages []types.Message, system in
 	for _, msg := range messages {
 		cms, err := t.convertMessageToMessages(msg)
 		if err != nil {
-			return nil, "", err
+			return nil, nil, err
 		}
 		chatMessages = append(chatMessages, cms...)
 	}
 	// 过滤空消息
 	chatMessages = filterEmptyMessages(chatMessages)
-	return chatMessages, systemText, nil
+	return chatMessages, systemContent, nil
 }
 
 func (t *RequestTransformer) convertMessageToMessages(msg types.Message) ([]types.ChatMessage, error) {
@@ -147,8 +164,9 @@ func (t *RequestTransformer) convertContentBlocks(role string, blocks []interfac
 			text, _ := blockMap["text"].(string)
 			textParts = append(textParts, text)
 			contentParts = append(contentParts, types.ChatContentPart{
-				Type: "text",
-				Text: text,
+				Type:         "text",
+				Text:         text,
+				CacheControl: convertCacheControl(blockMap["cache_control"]),
 			})
 		case "tool_use":
 			tc, err := t.convertToolUse(blockMap)
@@ -189,7 +207,7 @@ func (t *RequestTransformer) convertContentBlocks(role string, blocks []interfac
 			cm.Content = strings.Join(textParts, "\n")
 		}
 	} else if len(contentParts) > 0 {
-		if len(contentParts) == 1 && contentParts[0].Type == "text" {
+		if len(contentParts) == 1 && contentParts[0].Type == "text" && contentParts[0].CacheControl == nil {
 			cm.Content = contentParts[0].Text
 		} else {
 			cm.Content = contentParts
@@ -198,7 +216,7 @@ func (t *RequestTransformer) convertContentBlocks(role string, blocks []interfac
 	if len(thinkingParts) > 0 || hasThinkingMarker {
 		reasoningContent := strings.Join(thinkingParts, "")
 		if reasoningContent == "" {
-			reasoningContent = " "
+			reasoningContent = reasoningReplayPlaceholder
 		}
 		cm.ReasoningContent = &reasoningContent
 	}
@@ -224,8 +242,9 @@ func (t *RequestTransformer) convertContentBlocksToMessages(role string, blocks 
 				text, _ := blockMap["text"].(string)
 				textParts = append(textParts, text)
 				contentParts = append(contentParts, types.ChatContentPart{
-					Type: "text",
-					Text: text,
+					Type:         "text",
+					Text:         text,
+					CacheControl: convertCacheControl(blockMap["cache_control"]),
 				})
 			case "tool_result":
 				toolUseID, _ := blockMap["tool_use_id"].(string)
@@ -250,7 +269,7 @@ func (t *RequestTransformer) convertContentBlocksToMessages(role string, blocks 
 
 		if len(textParts) > 0 || len(contentParts) > 0 {
 			userMsg := types.ChatMessage{Role: "user"}
-			if len(contentParts) == 1 && contentParts[0].Type == "text" {
+			if len(contentParts) == 1 && contentParts[0].Type == "text" && contentParts[0].CacheControl == nil {
 				userMsg.Content = contentParts[0].Text
 			} else if len(contentParts) > 0 {
 				userMsg.Content = contentParts
@@ -434,13 +453,36 @@ func isThinkingEnabled(thinking interface{}) bool {
 	return thinkingType == "enabled" || thinkingType == "adaptive"
 }
 
+func convertCacheControl(raw interface{}) *types.CacheControl {
+	cacheMap, ok := raw.(map[string]interface{})
+	if !ok {
+		return nil
+	}
+	cacheType, _ := cacheMap["type"].(string)
+	if cacheType == "" {
+		return nil
+	}
+	return &types.CacheControl{Type: cacheType}
+}
+
+func needsReasoningReplay(model string) bool {
+	// 这些上游 reasoning 模型即使请求未显式携带 Anthropic thinking 配置，
+	// 历史 assistant 消息也需要回放 reasoning_content，否则压缩/重试后可能上游 400。
+	switch strings.ToLower(model) {
+	case "qwen3.6-plus", "glm-5.1", "kimi-k2.6", "kimi-k2.5":
+		return true
+	default:
+		return strings.HasPrefix(strings.ToLower(model), "deepseek-v4")
+	}
+}
+
 func applyReasoningPlaceholder(messages []types.ChatMessage) {
 	for index := range messages {
 		message := &messages[index]
 		if message.Role != "assistant" || message.ReasoningContent != nil {
 			continue
 		}
-		placeholder := " "
+		placeholder := reasoningReplayPlaceholder
 		message.ReasoningContent = &placeholder
 	}
 }

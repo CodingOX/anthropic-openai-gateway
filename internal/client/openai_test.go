@@ -133,6 +133,44 @@ func TestGetStreamingBodyDoesNotRetryEOF(t *testing.T) {
 	}
 }
 
+func TestGetStreamingBodySendsReasoningContent(t *testing.T) {
+	reasoning := "[reasoning content omitted]"
+	client := &OpenAIClient{
+		baseURL: "https://example.com/v1",
+		apiKey:  "test-key",
+		streamHTTPClient: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				body, err := io.ReadAll(req.Body)
+				if err != nil {
+					t.Fatalf("io.ReadAll(req.Body) error = %v", err)
+				}
+				if !strings.Contains(string(body), `"reasoning_content":"[reasoning content omitted]"`) {
+					t.Fatalf("request body = %s, want non-blank reasoning_content", body)
+				}
+
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     make(http.Header),
+					Body:       io.NopCloser(strings.NewReader("data: [DONE]\n\n")),
+				}, nil
+			}),
+		},
+	}
+
+	body, err := client.GetStreamingBody(context.Background(), &types.ChatCompletionRequest{
+		Model: "deepseek-v4-flash",
+		Messages: []types.ChatMessage{{
+			Role:             "assistant",
+			Content:          "compressed answer",
+			ReasoningContent: &reasoning,
+		}},
+	})
+	if err != nil {
+		t.Fatalf("GetStreamingBody() error = %v", err)
+	}
+	_ = body.Close()
+}
+
 func intPtr(value int) *int {
 	return &value
 }

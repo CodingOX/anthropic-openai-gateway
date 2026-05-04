@@ -2,6 +2,7 @@ package transformer
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"anthropic-openai-gateway/pkg/types"
@@ -162,7 +163,10 @@ func TestTransformRequestKeepsAssistantMessageWithOmittedThinking(t *testing.T) 
 	if msg.ReasoningContent == nil {
 		t.Fatal("ReasoningContent = nil, want placeholder for omitted thinking block")
 	}
-	if got, want := *msg.ReasoningContent, " "; got != want {
+	if got := *msg.ReasoningContent; strings.TrimSpace(got) == "" {
+		t.Fatalf("ReasoningContent = %q, want non-blank placeholder", got)
+	}
+	if got, want := *msg.ReasoningContent, reasoningReplayPlaceholder; got != want {
 		t.Fatalf("ReasoningContent = %q, want %q", got, want)
 	}
 	if got, want := msg.Content, "tool follow-up"; got != want {
@@ -197,7 +201,10 @@ func TestTransformRequestKeepsAssistantMessageWithRedactedThinking(t *testing.T)
 	if msg.ReasoningContent == nil {
 		t.Fatal("ReasoningContent = nil, want placeholder for redacted thinking block")
 	}
-	if got, want := *msg.ReasoningContent, " "; got != want {
+	if got := *msg.ReasoningContent; strings.TrimSpace(got) == "" {
+		t.Fatalf("ReasoningContent = %q, want non-blank placeholder", got)
+	}
+	if got, want := *msg.ReasoningContent, reasoningReplayPlaceholder; got != want {
 		t.Fatalf("ReasoningContent = %q, want %q", got, want)
 	}
 	if got := len(msg.ToolCalls); got != 1 {
@@ -229,7 +236,10 @@ func TestTransformRequestAddsReasoningPlaceholderWhenTopLevelThinkingEnabled(t *
 	if msg.ReasoningContent == nil {
 		t.Fatal("ReasoningContent = nil, want placeholder when top-level thinking is enabled")
 	}
-	if got, want := *msg.ReasoningContent, " "; got != want {
+	if got := *msg.ReasoningContent; strings.TrimSpace(got) == "" {
+		t.Fatalf("ReasoningContent = %q, want non-blank placeholder", got)
+	}
+	if got, want := *msg.ReasoningContent, reasoningReplayPlaceholder; got != want {
 		t.Fatalf("ReasoningContent = %q, want %q", got, want)
 	}
 	if got, want := msg.Content, "answer without explicit thinking block"; got != want {
@@ -241,6 +251,54 @@ func TestTransformRequestAddsReasoningPlaceholderWhenTopLevelThinkingEnabled(t *
 	}
 	if !containsJSONField(body, "reasoning_content") {
 		t.Fatalf("serialized request missing reasoning_content placeholder: %s", body)
+	}
+}
+
+func TestTransformRequestAddsReasoningPlaceholderForReplayModels(t *testing.T) {
+	models := []string{
+		"deepseek-v4-flash",
+		"qwen3.6-plus",
+		"glm-5.1",
+		"kimi-k2.6",
+		"kimi-k2.5",
+	}
+
+	for _, model := range models {
+		t.Run(model, func(t *testing.T) {
+			req := &types.MessageRequest{
+				Model:     model,
+				MaxTokens: 128,
+				Messages: []types.Message{
+					{
+						Role:    "assistant",
+						Content: "compressed prior answer without explicit thinking block",
+					},
+					{
+						Role:    "user",
+						Content: "continue",
+					},
+				},
+			}
+
+			openaiReq, err := NewRequestTransformer().TransformRequest(req)
+			if err != nil {
+				t.Fatalf("TransformRequest() error = %v", err)
+			}
+
+			msg := openaiReq.Messages[0]
+			if msg.ReasoningContent == nil {
+				t.Fatal("ReasoningContent = nil, want placeholder for reasoning replay")
+			}
+			if got := *msg.ReasoningContent; strings.TrimSpace(got) == "" {
+				t.Fatalf("ReasoningContent = %q, want non-blank placeholder", got)
+			}
+			if got, want := *msg.ReasoningContent, reasoningReplayPlaceholder; got != want {
+				t.Fatalf("ReasoningContent = %q, want %q", got, want)
+			}
+			if got, want := msg.Content, "compressed prior answer without explicit thinking block"; got != want {
+				t.Fatalf("Content = %#v, want %q", got, want)
+			}
+		})
 	}
 }
 
@@ -328,5 +386,94 @@ func TestTransformRequestUsesMaxTokensForUpstreamCompatibility(t *testing.T) {
 	}
 	if containsJSONField(body, "max_completion_tokens") {
 		t.Fatalf("serialized request should not contain max_completion_tokens: %s", body)
+	}
+}
+
+func TestTransformRequestPreservesCacheControlOnUserContentPart(t *testing.T) {
+	req := &types.MessageRequest{
+		Model:     "deepseek-v4-flash",
+		MaxTokens: 128,
+		Messages: []types.Message{
+			{
+				Role: "user",
+				Content: []interface{}{
+					map[string]interface{}{
+						"type": "text",
+						"text": "stable prefix",
+						"cache_control": map[string]interface{}{
+							"type": "ephemeral",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	openaiReq, err := NewRequestTransformer().TransformRequest(req)
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+
+	if got, want := len(openaiReq.Messages), 1; got != want {
+		t.Fatalf("len(Messages) = %d, want %d", got, want)
+	}
+
+	parts, ok := openaiReq.Messages[0].Content.([]types.ChatContentPart)
+	if !ok {
+		t.Fatalf("Content type = %T, want []types.ChatContentPart", openaiReq.Messages[0].Content)
+	}
+	if got, want := len(parts), 1; got != want {
+		t.Fatalf("len(parts) = %d, want %d", got, want)
+	}
+	if parts[0].CacheControl == nil {
+		t.Fatal("CacheControl = nil, want preserved cache_control")
+	}
+	if got, want := parts[0].CacheControl.Type, "ephemeral"; got != want {
+		t.Fatalf("CacheControl.Type = %q, want %q", got, want)
+	}
+}
+
+func TestTransformRequestPreservesCacheControlOnSystemContentPart(t *testing.T) {
+	req := &types.MessageRequest{
+		Model:     "deepseek-v4-flash",
+		MaxTokens: 128,
+		System: []interface{}{
+			map[string]interface{}{
+				"type": "text",
+				"text": "system prefix",
+				"cache_control": map[string]interface{}{
+					"type": "ephemeral",
+				},
+			},
+		},
+		Messages: []types.Message{
+			{Role: "user", Content: "hi"},
+		},
+	}
+
+	openaiReq, err := NewRequestTransformer().TransformRequest(req)
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+
+	if got, want := len(openaiReq.Messages), 2; got != want {
+		t.Fatalf("len(Messages) = %d, want %d", got, want)
+	}
+	if got, want := openaiReq.Messages[0].Role, "system"; got != want {
+		t.Fatalf("message[0].Role = %q, want %q", got, want)
+	}
+
+	parts, ok := openaiReq.Messages[0].Content.([]types.ChatContentPart)
+	if !ok {
+		t.Fatalf("system content type = %T, want []types.ChatContentPart", openaiReq.Messages[0].Content)
+	}
+	if got, want := len(parts), 1; got != want {
+		t.Fatalf("len(system parts) = %d, want %d", got, want)
+	}
+	if parts[0].CacheControl == nil {
+		t.Fatal("system CacheControl = nil, want preserved cache_control")
+	}
+	if got, want := parts[0].CacheControl.Type, "ephemeral"; got != want {
+		t.Fatalf("system CacheControl.Type = %q, want %q", got, want)
 	}
 }

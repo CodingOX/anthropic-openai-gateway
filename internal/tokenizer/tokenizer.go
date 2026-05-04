@@ -57,6 +57,30 @@ func CountTokens(req *types.MessageRequest) int {
 	return total
 }
 
+// CountChatCompletionTokens 计算 OpenAI ChatCompletionRequest 的输入 token 预估。
+// 使用与 CountTokens 相同的 tiktoken 规则；初始化失败时返回 -1。
+func CountChatCompletionTokens(req *types.ChatCompletionRequest) int {
+	if req == nil {
+		return -1
+	}
+	enc := encodingForModel(req.Model)
+	if enc == nil {
+		return -1
+	}
+
+	total := 0
+	for _, msg := range req.Messages {
+		total += countChatMessage(enc, msg)
+	}
+	for _, tool := range req.Tools {
+		total += countOpenAITool(enc, tool)
+	}
+	if total == 0 {
+		return 1
+	}
+	return total
+}
+
 // encodingForModel 返回模型对应的 tiktoken encoding。初始化失败时返回 nil。
 func encodingForModel(model string) *tiktoken.Tiktoken {
 	encName := resolveEncodingName(model)
@@ -152,6 +176,12 @@ func countContent(enc *tiktoken.Tiktoken, content interface{}) int {
 			}
 		}
 		return total
+	case []types.ChatContentPart:
+		total := 0
+		for _, part := range v {
+			total += countChatContentPart(enc, part)
+		}
+		return total
 	}
 	return 0
 }
@@ -172,5 +202,52 @@ func countTool(enc *tiktoken.Tiktoken, tool types.Tool) int {
 		total += len(enc.Encode(string(schemaBytes), nil, nil))
 	}
 	total += 4 // 工具格式开销
+	return total
+}
+
+func countChatMessage(enc *tiktoken.Tiktoken, msg types.ChatMessage) int {
+	total := len(enc.Encode(msg.Role, nil, nil))
+	total += countContent(enc, msg.Content)
+	if msg.ReasoningContent != nil {
+		total += len(enc.Encode(*msg.ReasoningContent, nil, nil))
+	}
+	if msg.Name != "" {
+		total += len(enc.Encode(msg.Name, nil, nil))
+	}
+	if msg.ToolCallID != "" {
+		total += len(enc.Encode(msg.ToolCallID, nil, nil))
+	}
+	for _, toolCall := range msg.ToolCalls {
+		total += len(enc.Encode(toolCall.ID, nil, nil))
+		total += len(enc.Encode(toolCall.Function.Name, nil, nil))
+		total += len(enc.Encode(toolCall.Function.Arguments, nil, nil))
+	}
+	total += 4
+	return total
+}
+
+func countChatContentPart(enc *tiktoken.Tiktoken, part types.ChatContentPart) int {
+	total := len(enc.Encode(part.Type, nil, nil))
+	if part.Text != "" {
+		total += len(enc.Encode(part.Text, nil, nil))
+	}
+	if part.ImageURL != nil {
+		total += len(enc.Encode(part.ImageURL.URL, nil, nil))
+		total += len(enc.Encode(part.ImageURL.Detail, nil, nil))
+	}
+	if part.CacheControl != nil {
+		total += len(enc.Encode(part.CacheControl.Type, nil, nil))
+	}
+	return total
+}
+
+func countOpenAITool(enc *tiktoken.Tiktoken, tool types.OpenAITool) int {
+	total := len(enc.Encode(tool.Type, nil, nil))
+	total += len(enc.Encode(tool.Function.Name, nil, nil))
+	total += len(enc.Encode(tool.Function.Description, nil, nil))
+	if parametersBytes, err := json.Marshal(tool.Function.Parameters); err == nil {
+		total += len(enc.Encode(string(parametersBytes), nil, nil))
+	}
+	total += 4
 	return total
 }

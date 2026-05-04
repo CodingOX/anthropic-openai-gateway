@@ -158,3 +158,35 @@ func TestCountTokensChineseText(t *testing.T) {
 		t.Fatalf("CountTokens = %d, want 12", n)
 	}
 }
+
+func TestCountChatCompletionTokens(t *testing.T) {
+	n := CountChatCompletionTokens(&types.ChatCompletionRequest{
+		Model: "deepseek-v4-flash",
+		Messages: []types.ChatMessage{
+			{Role: "system", Content: "You are helpful."},
+			{Role: "assistant", Content: "prior answer", ReasoningContent: strPtr("reasoning")},
+			{Role: "user", Content: []types.ChatContentPart{
+				{Type: "text", Text: "hello"},
+			}},
+		},
+		Tools: []types.OpenAITool{
+			{
+				Type: "function",
+				Function: types.OpenAIFunctionDef{
+					Name:        "lookup",
+					Description: "Lookup info",
+					Parameters: map[string]interface{}{
+						"type": "object",
+					},
+				},
+			},
+		},
+	})
+	if n <= 0 {
+		t.Fatalf("CountChatCompletionTokens = %d, want > 0", n)
+	}
+}
+
+func strPtr(value string) *string {
+	return &value
+}

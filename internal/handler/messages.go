@@ -45,6 +45,18 @@ type requestLogContext struct {
 	RoleSummary  string
 }
 
+type transformRequestSummary struct {
+	AnthropicInputTokens  int
+	OpenAIInputTokens     int
+	AnthropicRequestBytes int
+	OpenAIRequestBytes    int
+	InputTokenDelta       int
+	RequestBytesDelta     int
+	ReasoningPlaceholders int
+	CacheControlBlocks    int
+	SystemRole            string
+}
+
 var requestIDSeq atomic.Uint64
 
 // HandleCountTokens 提供 Anthropic count_tokens 兼容接口。
@@ -186,6 +198,7 @@ func (h *MessagesHandler) handleStreaming(w http.ResponseWriter, r *http.Request
 			fmt.Sprintf("request transform failed: %v", err))
 		return
 	}
+	h.logTransformRequestSummary(requestLog, anthropicReq, openaiReq, nil)
 
 	// 获取 OpenAI 流响应体
 	streamBody, err := h.openaiClient.GetStreamingBody(ctx, openaiReq)
@@ -244,6 +257,7 @@ func (h *MessagesHandler) handleNonStreaming(w http.ResponseWriter, r *http.Requ
 			fmt.Sprintf("request transform failed: %v", err))
 		return
 	}
+	h.logTransformRequestSummary(requestLog, anthropicReq, openaiReq, nil)
 
 	h.logInfo(requestLog, "upstream_request_started", fmt.Sprintf("upstream_model=%s", openaiReq.Model))
 
@@ -382,6 +396,49 @@ func estimateInputTokens(req types.MessageRequest) int {
 	return tokens
 }
 
+func (h *MessagesHandler) logTransformRequestSummary(requestLog requestLogContext, anthropicReq *types.MessageRequest, openaiReq *types.ChatCompletionRequest, rawBody []byte) {
+	summary := summarizeTransformRequest(anthropicReq, openaiReq, rawBody)
+	h.logInfo(requestLog, "transform_request_summary",
+		fmt.Sprintf("anthropic_input_tokens=%d", summary.AnthropicInputTokens),
+		fmt.Sprintf("openai_input_tokens=%d", summary.OpenAIInputTokens),
+		fmt.Sprintf("anthropic_request_bytes=%d", summary.AnthropicRequestBytes),
+		fmt.Sprintf("openai_request_bytes=%d", summary.OpenAIRequestBytes),
+		fmt.Sprintf("input_token_delta=%d", summary.InputTokenDelta),
+		fmt.Sprintf("request_bytes_delta=%d", summary.RequestBytesDelta),
+		fmt.Sprintf("reasoning_placeholders=%d", summary.ReasoningPlaceholders),
+		fmt.Sprintf("cache_control_blocks=%d", summary.CacheControlBlocks),
+		fmt.Sprintf("system_role=%s", summary.SystemRole))
+}
+
+func summarizeTransformRequest(anthropicReq *types.MessageRequest, openaiReq *types.ChatCompletionRequest, rawBody []byte) transformRequestSummary {
+	summary := transformRequestSummary{
+		AnthropicInputTokens: tokenizer.CountTokens(anthropicReq),
+		OpenAIInputTokens:    tokenizer.CountChatCompletionTokens(openaiReq),
+	}
+	if summary.AnthropicInputTokens < 0 && anthropicReq != nil {
+		summary.AnthropicInputTokens = estimateInputTokens(*anthropicReq)
+	}
+	if summary.OpenAIInputTokens < 0 {
+		summary.OpenAIInputTokens = 0
+	}
+	if len(rawBody) > 0 {
+		summary.AnthropicRequestBytes = len(rawBody)
+	} else if anthropicReq != nil {
+		if body, err := json.Marshal(anthropicReq); err == nil {
+			summary.AnthropicRequestBytes = len(body)
+		}
+	}
+	if body, err := json.Marshal(openaiReq); err == nil {
+		summary.OpenAIRequestBytes = len(body)
+	}
+	summary.InputTokenDelta = summary.OpenAIInputTokens - summary.AnthropicInputTokens
+	summary.RequestBytesDelta = summary.OpenAIRequestBytes - summary.AnthropicRequestBytes
+	summary.ReasoningPlaceholders = countReasoningPlaceholders(openaiReq)
+	summary.CacheControlBlocks = countCacheControlBlocks(openaiReq)
+	summary.SystemRole = detectSystemRole(openaiReq)
+	return summary
+}
+
 func newRequestLogContext(r *http.Request) requestLogContext {
 	if state := getRequestLogState(r.Context()); state != nil {
 		requestLog := state.requestLog
@@ -493,6 +550,48 @@ func hasSystemPrompt(system interface{}) bool {
 	default:
 		return false
 	}
+}
+
+func countReasoningPlaceholders(req *types.ChatCompletionRequest) int {
+	if req == nil {
+		return 0
+	}
+	total := 0
+	for _, msg := range req.Messages {
+		if msg.ReasoningContent != nil && *msg.ReasoningContent == "[reasoning content omitted]" {
+			total++
+		}
+	}
+	return total
+}
+
+func countCacheControlBlocks(req *types.ChatCompletionRequest) int {
+	if req == nil {
+		return 0
+	}
+	total := 0
+	for _, msg := range req.Messages {
+		parts, ok := msg.Content.([]types.ChatContentPart)
+		if !ok {
+			continue
+		}
+		for _, part := range parts {
+			if part.CacheControl != nil {
+				total++
+			}
+		}
+	}
+	return total
+}
+
+func detectSystemRole(req *types.ChatCompletionRequest) string {
+	if req == nil || len(req.Messages) == 0 {
+		return "none"
+	}
+	if req.Messages[0].Role == "system" || req.Messages[0].Role == "developer" {
+		return req.Messages[0].Role
+	}
+	return "none"
 }
 
 func summarizeRoles(messages []types.Message) string {

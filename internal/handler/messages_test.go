@@ -125,6 +125,64 @@ func TestHandleMessagesLogsUpstreamFailuresWithContext(t *testing.T) {
 	}
 }
 
+func TestHandleMessagesLogsTransformRequestSummary(t *testing.T) {
+	logBuf, restoreLogs := captureLogs(t)
+	defer restoreLogs()
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{
+			"id":"chatcmpl_123",
+			"object":"chat.completion",
+			"created":1710000000,
+			"model":"deepseek-v4-flash",
+			"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":42,"completion_tokens":7,"total_tokens":49}
+		}`))
+	}))
+	defer upstream.Close()
+
+	h := NewMessagesHandler(&config.Config{
+		ModelsNeedTransformation: []string{"deepseek-v4-flash"},
+		BaseURL:                  upstream.URL,
+		APIKey:                   "test-key",
+		NonStreamingTimeoutMS:    1000,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/v1/messages", strings.NewReader(`{
+		"model":"deepseek-v4-flash",
+		"max_tokens":16,
+		"system":[{"type":"text","text":"system prefix","cache_control":{"type":"ephemeral"}}],
+		"messages":[
+			{"role":"assistant","content":"prior answer"},
+			{"role":"user","content":[{"type":"text","text":"hello","cache_control":{"type":"ephemeral"}}]}
+		]
+	}`))
+	rec := httptest.NewRecorder()
+
+	h.HandleMessages(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+
+	logs := logBuf.String()
+	for _, want := range []string{
+		"stage=transform_request_summary",
+		"anthropic_input_tokens=",
+		"openai_input_tokens=",
+		"anthropic_request_bytes=",
+		"openai_request_bytes=",
+		"reasoning_placeholders=",
+		"cache_control_blocks=",
+		"system_role=system",
+	} {
+		if !strings.Contains(logs, want) {
+			t.Fatalf("logs missing %q; logs=%s", want, logs)
+		}
+	}
+}
+
 func TestHandleMessagesPassThroughNonStreaming(t *testing.T) {
 	// 模拟 Anthropic 上游，验证透传请求和响应
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

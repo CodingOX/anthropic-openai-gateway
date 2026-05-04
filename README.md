@@ -90,7 +90,7 @@ claude
 | 端点 | 说明 |
 |------|------|
 | `POST /v1/messages` | 主端点，处理消息请求（流式/非流式） |
-| `POST /v1/messages/count_tokens` | 基于本地 tiktoken 字典的 token 计数估算 |
+| `POST /v1/messages/count_tokens` | 基于本地 tiktoken 字典的请求 token 预估；不调用上游模型 |
 | `GET /health` | 健康检查 |
 
 ## 格式转换映射
@@ -124,7 +124,10 @@ claude
 | `usage.prompt_tokens` | `usage.input_tokens` |
 | `usage.completion_tokens` | `usage.output_tokens` |
 | `usage.prompt_cache_hit_tokens` | `usage.cache_read_input_tokens` |
+| `usage.prompt_tokens_details.cached_tokens` | `usage.cache_read_input_tokens` |
 | `usage.prompt_cache_miss_tokens` | `usage.cache_creation_input_tokens` |
+
+实际 `/v1/messages` 请求优先使用上游 OpenAI 响应中的 `usage`，非流式响应直接读取响应体 usage；流式响应会发送 `stream_options.include_usage=true`，并在最终 usage chunk 到达后写入 Anthropic `message_delta.usage`。`count_tokens` 是独立的预估接口，不能代表一次真实生成请求的最终计费用量。
 
 ### 流式转换
 
@@ -174,13 +177,15 @@ curl http://127.0.0.1:3456/health
 - **非流式重试**：遇到瞬时 EOF 自动重试一次（共 2 次尝试）
 - **Panic 恢复**：全局 recover 中间件，防止单个请求崩溃影响整个服务
 - **结构化日志**：每条请求带唯一 `request_id`，可追踪完整生命周期
-- **token 计数**：提供 `/v1/messages/count_tokens` 兼容端点
+- **真实用量透传**：`/v1/messages` 优先使用上游响应 `usage` 映射 input/output/cache token
+- **token 预估**：提供 `/v1/messages/count_tokens` 兼容端点，基于本地 tiktoken 字典计算请求侧 token
 - **thinking/推理**：支持 Anthropic thinking 块与 OpenAI `reasoning_content` 双向转换
-- **缓存用量**：透传 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens` 统计
+- **缓存用量**：透传 `prompt_cache_hit_tokens` / `prompt_cache_miss_tokens`，并兼容 OpenAI 官方 `prompt_tokens_details.cached_tokens`
 
 ## 已知限制
 
 - **Anthropic extended thinking**：基本 thinking 文本已支持转换，但 `signature`、`redacted_thinking` 等扩展字段会被忽略
-- **缓存控制**：Anthropic 的 `cache_control` 块会被忽略
+- **缓存控制**：Anthropic 文本块上的 `cache_control` 会随转换请求透传；是否命中仍取决于上游模型与缓存实现
 - **top_k**：Anthropic 的 `top_k` 参数目前未映射到 OpenAI 格式
-- **count_tokens**：使用内嵌 tiktoken 字典做本地估算，不会在运行时下载字典；图片、缓存控制等 Anthropic 特有开销仍可能与官方计费存在差异
+- **count_tokens**：使用内嵌 tiktoken 字典做本地预估，不会在运行时下载字典，也不会调用上游模型；图片、缓存控制等 Anthropic 特有开销仍可能与官方计费存在差异
+- **流式 usage**：流式请求依赖上游返回最终 usage chunk；如果连接在最终 chunk 前中断，响应可能没有最终 `message_delta.usage`

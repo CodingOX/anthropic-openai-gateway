@@ -156,6 +156,9 @@ func TestProxyStreamSplitsUsageBetweenMessageStartAndDelta(t *testing.T) {
 	if messageDelta.Usage.InputTokens != 0 {
 		t.Fatalf("InputTokens = %d, want 0 after cache tokens are split out", messageDelta.Usage.InputTokens)
 	}
+	if !hasUsageField(rawEvents[len(rawEvents)-2], "input_tokens") {
+		t.Fatalf("message_delta usage must include input_tokens even when zero: %s", rawEvents[len(rawEvents)-2])
+	}
 	if messageDelta.Usage.OutputTokens != 7 {
 		t.Fatalf("OutputTokens = %d, want 7", messageDelta.Usage.OutputTokens)
 	}

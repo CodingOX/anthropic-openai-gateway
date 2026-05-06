@@ -46,8 +46,8 @@ func TestTransformResponsePreservesReasoningAndCacheUsage(t *testing.T) {
 	if got.Usage.CacheCreationInputTokens != 3 {
 		t.Fatalf("CacheCreationInputTokens = %d, want 3", got.Usage.CacheCreationInputTokens)
 	}
-	if got.Usage.InputTokens != 0 {
-		t.Fatalf("InputTokens = %d, want 0 after cache tokens are split out", got.Usage.InputTokens)
+	if got.Usage.InputTokens != 10 {
+		t.Fatalf("InputTokens = %d, want 10 (prompt_tokens total, not subtract cache)", got.Usage.InputTokens)
 	}
 }
 
@@ -78,8 +78,8 @@ func TestTransformResponseNormalizesCacheUsageFallbacks(t *testing.T) {
 	if got.Usage.CacheCreationInputTokens != 2 {
 		t.Fatalf("CacheCreationInputTokens = %d, want 2", got.Usage.CacheCreationInputTokens)
 	}
-	if got.Usage.InputTokens != 1 {
-		t.Fatalf("InputTokens = %d, want 1 after cache tokens are split out", got.Usage.InputTokens)
+	if got.Usage.InputTokens != 12 {
+		t.Fatalf("InputTokens = %d, want 12 (prompt_tokens total, not subtract cache)", got.Usage.InputTokens)
 	}
 }
 

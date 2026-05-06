@@ -162,10 +162,8 @@ func normalizeOpenAIUsage(usage *types.ChatUsage) types.Usage {
 		usage.PromptCacheMissTokens,
 		usage.CacheCreationInputTokens,
 	)
-	inputTokens := usage.PromptTokens - cacheReadTokens - cacheCreationTokens
-	if inputTokens < 0 {
-		inputTokens = 0
-	}
+	// Anthropic 的 input_tokens 是总输入 token 数，cache_read/cache_creation 是重叠子集，不应减去
+	inputTokens := usage.PromptTokens
 
 	return types.Usage{
 		InputTokens:              inputTokens,

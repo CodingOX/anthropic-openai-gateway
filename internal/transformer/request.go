@@ -26,7 +26,7 @@ func (t *RequestTransformer) TransformRequest(ar *types.MessageRequest) (*types.
 	log.Printf("[TRANSFORMER] 📝 模型: %s, 消息数: %d, 工具数: %d", ar.Model, len(ar.Messages), len(ar.Tools))
 
 	// 转换消息列表
-	messages, systemContent, err := t.convertMessages(ar.Messages, ar.System)
+	messages, systemContent, err := t.convertMessages(ar.Model, ar.Messages, ar.System)
 	if err != nil {
 		log.Printf("[TRANSFORMER] ❌ 消息转换失败: %v", err)
 		return nil, fmt.Errorf("convert messages: %w", err)
@@ -78,7 +78,7 @@ func (t *RequestTransformer) TransformRequest(ar *types.MessageRequest) (*types.
 }
 
 // convertMessages 转换消息列表，分离 system prompt。
-func (t *RequestTransformer) convertMessages(messages []types.Message, system interface{}) ([]types.ChatMessage, interface{}, error) {
+func (t *RequestTransformer) convertMessages(model string, messages []types.Message, system interface{}) ([]types.ChatMessage, interface{}, error) {
 	// 处理独立的 system 字段
 	var systemContent interface{}
 	switch s := system.(type) {
@@ -99,7 +99,7 @@ func (t *RequestTransformer) convertMessages(messages []types.Message, system in
 					systemParts = append(systemParts, types.ChatContentPart{
 						Type:         "text",
 						Text:         text,
-						CacheControl: convertCacheControl(blockMap["cache_control"]),
+						CacheControl: convertCacheControl(model, blockMap["cache_control"]),
 					})
 				}
 			}
@@ -116,7 +116,7 @@ func (t *RequestTransformer) convertMessages(messages []types.Message, system in
 
 	var chatMessages []types.ChatMessage
 	for _, msg := range messages {
-		cms, err := t.convertMessageToMessages(msg)
+		cms, err := t.convertMessageToMessages(model, msg)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -127,7 +127,7 @@ func (t *RequestTransformer) convertMessages(messages []types.Message, system in
 	return chatMessages, systemContent, nil
 }
 
-func (t *RequestTransformer) convertMessageToMessages(msg types.Message) ([]types.ChatMessage, error) {
+func (t *RequestTransformer) convertMessageToMessages(model string, msg types.Message) ([]types.ChatMessage, error) {
 	switch content := msg.Content.(type) {
 	case string:
 		return []types.ChatMessage{{
@@ -135,7 +135,7 @@ func (t *RequestTransformer) convertMessageToMessages(msg types.Message) ([]type
 			Content: content,
 		}}, nil
 	case []interface{}:
-		return t.convertContentBlocksToMessages(msg.Role, content)
+		return t.convertContentBlocksToMessages(model, msg.Role, content)
 	case nil:
 		return nil, nil
 	default:
@@ -144,7 +144,7 @@ func (t *RequestTransformer) convertMessageToMessages(msg types.Message) ([]type
 }
 
 // convertContentBlocks 转换内容块数组。
-func (t *RequestTransformer) convertContentBlocks(role string, blocks []interface{}) ([]types.ChatMessage, error) {
+func (t *RequestTransformer) convertContentBlocks(model, role string, blocks []interface{}) ([]types.ChatMessage, error) {
 	var textParts []string
 	var thinkingParts []string
 	hasThinkingMarker := false
@@ -166,7 +166,7 @@ func (t *RequestTransformer) convertContentBlocks(role string, blocks []interfac
 			contentParts = append(contentParts, types.ChatContentPart{
 				Type:         "text",
 				Text:         text,
-				CacheControl: convertCacheControl(blockMap["cache_control"]),
+				CacheControl: convertCacheControl(model, blockMap["cache_control"]),
 			})
 		case "tool_use":
 			tc, err := t.convertToolUse(blockMap)
@@ -224,7 +224,7 @@ func (t *RequestTransformer) convertContentBlocks(role string, blocks []interfac
 	return []types.ChatMessage{*cm}, nil
 }
 
-func (t *RequestTransformer) convertContentBlocksToMessages(role string, blocks []interface{}) ([]types.ChatMessage, error) {
+func (t *RequestTransformer) convertContentBlocksToMessages(model, role string, blocks []interface{}) ([]types.ChatMessage, error) {
 	if role == "user" {
 		var result []types.ChatMessage
 		var textParts []string
@@ -244,7 +244,7 @@ func (t *RequestTransformer) convertContentBlocksToMessages(role string, blocks 
 				contentParts = append(contentParts, types.ChatContentPart{
 					Type:         "text",
 					Text:         text,
-					CacheControl: convertCacheControl(blockMap["cache_control"]),
+					CacheControl: convertCacheControl(model, blockMap["cache_control"]),
 				})
 			case "tool_result":
 				toolUseID, _ := blockMap["tool_use_id"].(string)
@@ -282,7 +282,7 @@ func (t *RequestTransformer) convertContentBlocksToMessages(role string, blocks 
 		return result, nil
 	}
 
-	return t.convertContentBlocks(role, blocks)
+	return t.convertContentBlocks(model, role, blocks)
 }
 
 // convertToolUse 转换 tool_use 块为 OpenAI tool_call。
@@ -453,7 +453,10 @@ func isThinkingEnabled(thinking interface{}) bool {
 	return thinkingType == "enabled" || thinkingType == "adaptive"
 }
 
-func convertCacheControl(raw interface{}) *types.CacheControl {
+func convertCacheControl(model string, raw interface{}) *types.CacheControl {
+	if isDeepSeekV4Model(model) {
+		return nil
+	}
 	cacheMap, ok := raw.(map[string]interface{})
 	if !ok {
 		return nil
@@ -474,6 +477,10 @@ func needsReasoningReplay(model string) bool {
 	default:
 		return strings.HasPrefix(strings.ToLower(model), "deepseek-v4")
 	}
+}
+
+func isDeepSeekV4Model(model string) bool {
+	return strings.HasPrefix(strings.ToLower(model), "deepseek-v4")
 }
 
 func applyReasoningPlaceholder(messages []types.ChatMessage) {

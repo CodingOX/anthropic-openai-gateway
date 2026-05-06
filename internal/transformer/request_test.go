@@ -391,7 +391,7 @@ func TestTransformRequestUsesMaxTokensForUpstreamCompatibility(t *testing.T) {
 
 func TestTransformRequestPreservesCacheControlOnUserContentPart(t *testing.T) {
 	req := &types.MessageRequest{
-		Model:     "deepseek-v4-flash",
+		Model:     "gpt-4o",
 		MaxTokens: 128,
 		Messages: []types.Message{
 			{
@@ -435,7 +435,7 @@ func TestTransformRequestPreservesCacheControlOnUserContentPart(t *testing.T) {
 
 func TestTransformRequestPreservesCacheControlOnSystemContentPart(t *testing.T) {
 	req := &types.MessageRequest{
-		Model:     "deepseek-v4-flash",
+		Model:     "gpt-4o",
 		MaxTokens: 128,
 		System: []interface{}{
 			map[string]interface{}{
@@ -475,5 +475,54 @@ func TestTransformRequestPreservesCacheControlOnSystemContentPart(t *testing.T) 
 	}
 	if got, want := parts[0].CacheControl.Type, "ephemeral"; got != want {
 		t.Fatalf("system CacheControl.Type = %q, want %q", got, want)
+	}
+}
+
+func TestTransformRequestDropsCacheControlForDeepSeekV4(t *testing.T) {
+	req := &types.MessageRequest{
+		Model:     "deepseek-v4-flash",
+		MaxTokens: 128,
+		System: []interface{}{
+			map[string]interface{}{
+				"type": "text",
+				"text": "system prefix",
+				"cache_control": map[string]interface{}{
+					"type": "ephemeral",
+				},
+			},
+		},
+		Messages: []types.Message{
+			{
+				Role: "user",
+				Content: []interface{}{
+					map[string]interface{}{
+						"type": "text",
+						"text": "stable prefix",
+						"cache_control": map[string]interface{}{
+							"type": "ephemeral",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	openaiReq, err := NewRequestTransformer().TransformRequest(req)
+	if err != nil {
+		t.Fatalf("TransformRequest() error = %v", err)
+	}
+
+	if got, want := openaiReq.Messages[0].Content, "system prefix"; got != want {
+		t.Fatalf("system Content = %#v, want %q", got, want)
+	}
+	if got, want := openaiReq.Messages[1].Content, "stable prefix"; got != want {
+		t.Fatalf("user Content = %#v, want %q", got, want)
+	}
+	body, err := json.Marshal(openaiReq)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if strings.Contains(string(body), "cache_control") {
+		t.Fatalf("serialized request contains cache_control for DeepSeek v4: %s", body)
 	}
 }

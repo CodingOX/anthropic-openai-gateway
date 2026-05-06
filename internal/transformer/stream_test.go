@@ -153,17 +153,23 @@ func TestProxyStreamSplitsUsageBetweenMessageStartAndDelta(t *testing.T) {
 	if messageDelta.Usage == nil {
 		t.Fatalf("message_delta usage = nil")
 	}
-	if hasUsageField(rawEvents[len(rawEvents)-2], "input_tokens") {
-		t.Fatalf("message_delta usage must not include input_tokens: %s", rawEvents[len(rawEvents)-2])
+	if messageDelta.Usage.InputTokens != 0 {
+		t.Fatalf("InputTokens = %d, want 0 after cache tokens are split out", messageDelta.Usage.InputTokens)
 	}
 	if messageDelta.Usage.OutputTokens != 7 {
 		t.Fatalf("OutputTokens = %d, want 7", messageDelta.Usage.OutputTokens)
 	}
-	if hasUsageField(rawEvents[len(rawEvents)-2], "cache_read_input_tokens") {
-		t.Fatalf("message_delta usage must not include cache_read_input_tokens: %s", rawEvents[len(rawEvents)-2])
+	if messageDelta.Usage.CacheReadInputTokens != 5 {
+		t.Fatalf("CacheReadInputTokens = %d, want 5", messageDelta.Usage.CacheReadInputTokens)
 	}
-	if hasUsageField(rawEvents[len(rawEvents)-2], "cache_creation_input_tokens") {
-		t.Fatalf("message_delta usage must not include cache_creation_input_tokens: %s", rawEvents[len(rawEvents)-2])
+	if messageDelta.Usage.CacheCreationInputTokens != 6 {
+		t.Fatalf("CacheCreationInputTokens = %d, want 6", messageDelta.Usage.CacheCreationInputTokens)
+	}
+	if !hasUsageField(rawEvents[len(rawEvents)-2], "cache_read_input_tokens") {
+		t.Fatalf("message_delta usage must include cache_read_input_tokens: %s", rawEvents[len(rawEvents)-2])
+	}
+	if !hasUsageField(rawEvents[len(rawEvents)-2], "cache_creation_input_tokens") {
+		t.Fatalf("message_delta usage must include cache_creation_input_tokens: %s", rawEvents[len(rawEvents)-2])
 	}
 }
 
@@ -186,6 +192,12 @@ func TestProxyStreamNormalizesCacheUsageFallbacks(t *testing.T) {
 	}
 	if messageDelta.Usage.OutputTokens != 7 {
 		t.Fatalf("OutputTokens = %d, want 7", messageDelta.Usage.OutputTokens)
+	}
+	if messageDelta.Usage.CacheReadInputTokens != 5 {
+		t.Fatalf("CacheReadInputTokens = %d, want 5", messageDelta.Usage.CacheReadInputTokens)
+	}
+	if messageDelta.Usage.CacheCreationInputTokens != 6 {
+		t.Fatalf("CacheCreationInputTokens = %d, want 6", messageDelta.Usage.CacheCreationInputTokens)
 	}
 }
 

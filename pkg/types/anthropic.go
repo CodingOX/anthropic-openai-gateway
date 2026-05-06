@@ -104,9 +104,12 @@ type Usage struct {
 	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 }
 
-// StreamUsage 表示 Anthropic 流式 delta 中的增量用量。
+// StreamUsage 表示 Anthropic 流式 delta 中的累计用量。
 type StreamUsage struct {
-	OutputTokens int `json:"output_tokens"`
+	InputTokens              int `json:"input_tokens,omitempty"`
+	OutputTokens             int `json:"output_tokens"`
+	CacheCreationInputTokens int `json:"cache_creation_input_tokens,omitempty"`
+	CacheReadInputTokens     int `json:"cache_read_input_tokens,omitempty"`
 }
 
 // StreamEvent SSE 流事件（Anthropic 格式）。

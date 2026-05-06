@@ -193,7 +193,10 @@ func (h *StreamHandler) writeDone(w io.Writer, messageID, model string, stopReas
 	}
 	if usage != nil {
 		messageDelta.Usage = &types.StreamUsage{
-			OutputTokens: usage.OutputTokens,
+			InputTokens:              usage.InputTokens,
+			OutputTokens:             usage.OutputTokens,
+			CacheCreationInputTokens: usage.CacheCreationInputTokens,
+			CacheReadInputTokens:     usage.CacheReadInputTokens,
 		}
 	}
 	h.writeEvent(w, messageDelta, flusher)

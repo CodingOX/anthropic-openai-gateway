@@ -4,6 +4,8 @@ package handler
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -55,6 +57,8 @@ type transformRequestSummary struct {
 	ReasoningPlaceholders int
 	CacheControlBlocks    int
 	SystemRole            string
+	PrefixFingerprint     string
+	ToolsFingerprint      string
 }
 
 var requestIDSeq atomic.Uint64
@@ -407,7 +411,9 @@ func (h *MessagesHandler) logTransformRequestSummary(requestLog requestLogContex
 		fmt.Sprintf("request_bytes_delta=%d", summary.RequestBytesDelta),
 		fmt.Sprintf("reasoning_placeholders=%d", summary.ReasoningPlaceholders),
 		fmt.Sprintf("cache_control_blocks=%d", summary.CacheControlBlocks),
-		fmt.Sprintf("system_role=%s", summary.SystemRole))
+		fmt.Sprintf("system_role=%s", summary.SystemRole),
+		fmt.Sprintf("prefix_fingerprint=%s", summary.PrefixFingerprint),
+		fmt.Sprintf("tools_fingerprint=%s", summary.ToolsFingerprint))
 }
 
 func summarizeTransformRequest(anthropicReq *types.MessageRequest, openaiReq *types.ChatCompletionRequest, rawBody []byte) transformRequestSummary {
@@ -436,6 +442,8 @@ func summarizeTransformRequest(anthropicReq *types.MessageRequest, openaiReq *ty
 	summary.ReasoningPlaceholders = countReasoningPlaceholders(openaiReq)
 	summary.CacheControlBlocks = countCacheControlBlocks(openaiReq)
 	summary.SystemRole = detectSystemRole(openaiReq)
+	summary.PrefixFingerprint = prefixFingerprint(openaiReq)
+	summary.ToolsFingerprint = toolsFingerprint(openaiReq)
 	return summary
 }
 
@@ -592,6 +600,55 @@ func detectSystemRole(req *types.ChatCompletionRequest) string {
 		return req.Messages[0].Role
 	}
 	return "none"
+}
+
+func prefixFingerprint(req *types.ChatCompletionRequest) string {
+	if req == nil {
+		return ""
+	}
+	type messageShape struct {
+		Role             string `json:"role"`
+		ContentType      string `json:"content_type,omitempty"`
+		ToolCalls        int    `json:"tool_calls,omitempty"`
+		ReasoningPresent bool   `json:"reasoning_present,omitempty"`
+		ToolCallID       string `json:"tool_call_id,omitempty"`
+	}
+	shapes := make([]messageShape, 0, len(req.Messages))
+	for _, msg := range req.Messages {
+		shape := messageShape{Role: msg.Role}
+		switch msg.Content.(type) {
+		case nil:
+			shape.ContentType = "nil"
+		case string:
+			shape.ContentType = "string"
+		case []types.ChatContentPart:
+			shape.ContentType = "parts"
+		default:
+			shape.ContentType = fmt.Sprintf("%T", msg.Content)
+		}
+		shape.ToolCalls = len(msg.ToolCalls)
+		shape.ReasoningPresent = msg.ReasoningContent != nil
+		shape.ToolCallID = msg.ToolCallID
+		shapes = append(shapes, shape)
+	}
+	body, err := json.Marshal(shapes)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:8])
+}
+
+func toolsFingerprint(req *types.ChatCompletionRequest) string {
+	if req == nil || len(req.Tools) == 0 {
+		return ""
+	}
+	body, err := json.Marshal(req.Tools)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:8])
 }
 
 func summarizeRoles(messages []types.Message) string {

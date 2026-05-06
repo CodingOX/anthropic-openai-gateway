@@ -176,10 +176,16 @@ func TestHandleMessagesLogsTransformRequestSummary(t *testing.T) {
 		"reasoning_placeholders=",
 		"cache_control_blocks=",
 		"system_role=system",
+		"prefix_fingerprint=",
+		"tools_fingerprint=",
 	} {
 		if !strings.Contains(logs, want) {
 			t.Fatalf("logs missing %q; logs=%s", want, logs)
 		}
+	}
+
+	if strings.Contains(logs, `"system prefix"`) || strings.Contains(logs, `"hello"`) || strings.Contains(logs, `"prior answer"`) {
+		t.Fatalf("logs leaked prompt content: %s", logs)
 	}
 }
 
